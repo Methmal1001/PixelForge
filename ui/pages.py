@@ -116,7 +116,7 @@ class EmptyState(QWidget):
         column.addWidget(title)
         subtitle = label(
             "Open an image to edit, start from a social-media size, or explore the sample layout.\n"
-            "Or describe a design in the AI Generate panel to create one with Google Gemini.",
+            "Or describe a design in the AI Generate panel to create one with AI.",
             "Muted",
         )
         subtitle.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -371,7 +371,7 @@ class SettingsPage(QWidget):
     provider_removed = Signal()
 
     DESCRIPTIONS = {
-        "dark": "Charcoal studio theme — easy on the eyes for long sessions.",
+        "dark": "Dark grey studio theme — easy on the eyes for long sessions.",
         "light": "Bright, clean theme for well-lit rooms.",
         "system": "Follows your Windows light/dark setting automatically.",
     }

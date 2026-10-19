@@ -11,19 +11,19 @@ from PySide6.QtWidgets import QApplication
 FONT_FAMILY = "Segoe UI"
 
 DARK_COLORS = {
-    "bg0": "#0D0E13",       # window / inputs
-    "bg1": "#13151C",       # sidebar & panels
-    "bg2": "#1A1D27",       # cards
-    "bg3": "#222634",       # buttons / hover
-    "bg4": "#2C3142",       # strong hover / slider track
-    "canvas": "#0A0B0F",
-    "border": "#2A2F3E",
-    "border_soft": "#1E222D",
-    "border_strong": "#3A4053",
+    "bg0": "#202126",       # window / inputs
+    "bg1": "#27282E",       # sidebar & panels
+    "bg2": "#2E3036",       # cards
+    "bg3": "#373940",       # buttons / hover
+    "bg4": "#43454E",       # strong hover / slider track
+    "canvas": "#1A1B1F",
+    "border": "#3B3D46",
+    "border_soft": "#32343B",
+    "border_strong": "#4C4F5A",
     "strong": "#FFFFFF",    # headings and selected text
-    "text": "#E9EBF3",
-    "text_dim": "#A0A6BA",
-    "text_muted": "#6C728A",
+    "text": "#ECEDF2",
+    "text_dim": "#AEB2C2",
+    "text_muted": "#868A9C",
     "on_accent": "#FFFFFF",  # text/icons on accent-coloured fills
     "accent": "#7C5CFF",
     "accent_hover": "#8F74FF",
@@ -32,8 +32,8 @@ DARK_COLORS = {
     "success": "#2FD08F",
     "warning": "#F5B544",
     "danger": "#FF5C7A",
-    "checker_a": "#2A2D38",
-    "checker_b": "#353948",
+    "checker_a": "#34363D",
+    "checker_b": "#3F4149",
 }
 
 LIGHT_COLORS = {
