@@ -1,0 +1,24 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+
+# Virtual environment
+.venv/
+venv/
+
+# Secrets (Stage 2 API keys must never be committed)
+.env
+*.key
+
+# User data
+storage/projects/*
+storage/generated/*
+!storage/**/.gitkeep
+
+# Editors / OS
+.vscode/
+.idea/
+Thumbs.db
+.DS_Store
