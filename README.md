@@ -19,6 +19,14 @@ Without activating the virtual environment:
 E:\2026\Python\PixelForgeAI\.venv\Scripts\python.exe main.py
 ```
 
+**Desktop shortcut (Windows):** create a Desktop icon and a Start Menu entry that open the app without a console window:
+
+```powershell
+.\.venv\Scripts\python.exe tools\create_shortcut.py
+```
+
+Run it again if you move the project folder.
+
 Install the dependencies (already present in `.venv`):
 
 ```powershell
