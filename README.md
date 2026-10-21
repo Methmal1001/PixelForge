@@ -58,6 +58,12 @@ The tests use temporary files and need no API key. The export tests render text 
 | Sample | **Load Sample Design** opens placeholder artwork drawn locally with Pillow. It has editable text layers and is not AI output. |
 | AI panel | Prompt, example prompts, reference image upload/preview/replace/remove, design type, style and aspect ratio. **Generate** explains that the provider arrives in Stage 2. |
 
+| Brand details | Optional company name, description, phone numbers and emails, each with a font size and colour, plus a colour theme. **Editable text layers** mode asks the AI for a design without text and adds your details as editable layers. **Draw text inside the AI image** mode sends the exact text, sizes and colours in the prompt. Details are remembered between sessions. |
+| Select Area (M) | Rectangle, ellipse or freehand lasso selection. Inside the selection you can Adjust (with live preview), Blur, Sharpen, Remove (fills from the surroundings), Fill with a colour, Erase to transparent, or Crop. All actions can be undone. |
+| Layers (Photoshop-style) | **Magic Wand** (click to select an area of similar colour, Shift+click adds, adjustable tolerance). **Copy Layer** (Ctrl+J) and **Cut Layer** (Shift+Ctrl+J) turn the selection into a movable image layer; Cut fills the hole. Drag a layer to move it and drag a corner handle to resize it. The **Layers** tab lists every layer with thumbnails and has opacity, size, rotation, flip, duplicate, up/down, merge into background and delete. **Add Image…** places a logo or photo as a layer. Layers are exported between the background and the text. |
+| Input safety | Dropdowns, number boxes and sliders change only on click or typing; the mouse wheel scrolls the panel instead. |
+| Advanced adjust | Filters (Vivid, Warm, Cool, Vintage, Dramatic, Fade, Mono, Noir, Sepia), highlights/shadows, warmth/tint/hue, sharpness, blur, vignette, sepia, invert, and rotate by any angle. |
+| Advanced text | Heading/subheading/body presets, underline, UPPERCASE, letter spacing, line height, opacity, rotation, drop shadow, outline, background highlight, duplicate, layer order and centring. Canvas and export use the same renderer. |
 | Theme | **Settings → Appearance**: choose **Dark**, **Light** or **System** (follows Windows light/dark, and switches live when Windows changes). The choice is saved with QSettings and restored at the next launch. Default: Dark. |
 
 Placeholder pages with a planned stage: My Projects, Recent Designs, Templates (Stage 3) and Generation History (Stage 2). Settings also shows the AI provider section planned for Stage 2.
@@ -118,6 +124,7 @@ Choose the provider in **Settings → AI provider** (stored as `AI_PROVIDER` in 
 | Provider | Key | Notes |
 | --- | --- | --- |
 | **Pollinations.ai** (`pollinations`) | none | Free and anonymous, good for testing. Only the prompt text and image size are sent, to a public third-party service (private mode requested), so avoid confidential details in prompts. Limits: one image every 45 seconds, about 0.6 MP output (enlarged to the preset size), a small "pollinations.ai" watermark, and no reference images. |
+| **Manus AI** (`manus`) | Manus API key (`MANUS_API_KEY`) | Autonomous agent via Manus API v2. Each image is one Manus task (`task.create`, then polling `task.listMessages`, then downloading the image attachment). Takes about 1–5 minutes and uses Manus credits. Agent profile `MANUS_AGENT_PROFILE`: `lite` (default), `standard` or `max`. Supports reference images. Test Connection shows your credit balance without creating a task. |
 | **Google Gemini** (`gemini`) | Google AI Studio key | Higher quality and supports reference images. Needs billing enabled; the free tier's image quota is 0. |
 
 ### Google Gemini

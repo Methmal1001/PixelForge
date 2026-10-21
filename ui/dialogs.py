@@ -20,10 +20,11 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from models.design import Adjustments
 from models.presets import SIZE_PRESETS, SizePreset
 from services.image_processor import CANVAS_BACKGROUNDS, MAX_DIMENSION, ImageProcessingError, validate_dimensions
 from ui.styles import COLORS
-from ui.widgets import ColorButton, SegmentedControl, label, make_button, section_title
+from ui.widgets import ColorButton, LabeledSlider, SegmentedControl, label, make_button, section_title
 
 FIT_MODE_LABELS = {
     "fill": "Crop to fill (no distortion)",
@@ -351,6 +352,31 @@ class CropDialog(StyledDialog):
 
     def values(self) -> QRect:
         return QRect(self.left.value(), self.top.value(), self.width_spin.value(), self.height_spin.value())
+
+
+class RegionAdjustDialog(StyledDialog):
+    """Adjust only the selected area, with a live preview on the canvas."""
+
+    SLIDERS = (("brightness", "Brightness", "factor"), ("contrast", "Contrast", "factor"),
+               ("saturation", "Saturation", "factor"), ("warmth", "Warmth", "int"), ("hue", "Hue", "hue"))
+
+    def __init__(self, parent: QWidget | None, on_preview) -> None:
+        super().__init__(parent, "Adjust Selected Area",
+                         "Changes apply only inside the selection. The canvas shows a live preview.", "Apply")
+        self._on_preview = on_preview
+        self._sliders: dict[str, tuple[LabeledSlider, str]] = {}
+        for key, name, kind in self.SLIDERS:
+            low, high, suffix = (-180, 180, "°") if kind == "hue" else (-100, 100, "")
+            slider = LabeledSlider(name, None, minimum=low, maximum=high, default=0, suffix=suffix)
+            slider.valueChanged.connect(lambda _v: self._on_preview(self.values()))
+            self._sliders[key] = (slider, kind)
+            self.body.addWidget(slider)
+
+    def values(self) -> Adjustments:
+        values = {}
+        for key, (slider, kind) in self._sliders.items():
+            values[key] = round(1 + slider.value() / 100, 3) if kind == "factor" else int(slider.value())
+        return Adjustments(**values)
 
 
 class ExportDialog(StyledDialog):

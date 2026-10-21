@@ -9,6 +9,7 @@ from unittest import mock
 from PIL import Image
 
 from services.generation_service import (
+    GenerationCancelledError,
     GenerationError,
     GenerationQuotaError,
     GenerationRequest,
@@ -81,6 +82,19 @@ class PollinationsTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             PollinationsImageService(transport=fake).generate(request(prompt="hey"))
         self.assertEqual(fake.urls, [])
+
+    def test_result_arriving_after_stop_is_discarded(self) -> None:
+        svc = PollinationsImageService()
+
+        def slow_get(url, timeout):
+            svc.cancel()  # user pressed Stop while the request was in flight
+            return 200, "image/jpeg", jpeg_bytes()
+
+        svc._transport = slow_get
+        with self.assertRaises(GenerationCancelledError):
+            svc.generate(request())
+        svc._transport = FakeGet(200, "image/jpeg", jpeg_bytes())
+        self.assertEqual(svc.generate(request()).size, (686, 858), "next run works normally")
 
     def test_check_connection_lists_models(self) -> None:
         fake = FakeGet(200, "application/json", b'["sana"]')

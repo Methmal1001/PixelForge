@@ -73,6 +73,10 @@ class PollinationsImageService(ImageGenerationService):
     def is_configured(self) -> bool:
         return True  # no key needed
 
+    def ready_detail(self) -> str:
+        return ("Free, no API key. Sends only your prompt and size to the provider. One image every 45 s; "
+                "reference images are not sent.")
+
     def build_url(self, request: GenerationRequest, seed: int | None = None) -> str:
         preset = find_preset(request.preset_key)
         width, height = (preset.width, preset.height) if preset else (1080, 1080)
@@ -90,7 +94,9 @@ class PollinationsImageService(ImageGenerationService):
 
     def generate(self, request: GenerationRequest) -> Image.Image:
         request.validate()
+        cancel = self.begin_generation()
         status, content_type, body = self._transport(self.build_url(request), self._timeout)
+        self.raise_if_cancelled(cancel)  # a single HTTP request cannot be interrupted; discard late results
         if status == 200 and content_type.startswith("image/"):
             try:
                 with Image.open(io.BytesIO(body)) as image:

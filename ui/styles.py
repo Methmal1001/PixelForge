@@ -198,6 +198,18 @@ QToolButton#ToolTile {
 QToolButton#ToolTile:hover { border-color: $accent; color: $strong; background: $accent_a10; }
 QToolButton#ToolTile:checked { border-color: $accent; color: $strong; background: $accent_a22; }
 QToolButton#ToolTile:disabled { color: $text_muted; border-color: $border_soft; background: $bg1; }
+QToolButton#SectionHeader {
+    background: transparent; border: none; border-radius: 6px; padding: 4px 2px;
+    color: $text_muted; text-align: left;
+}
+QToolButton#SectionHeader:hover { color: $text; background: transparent; }
+QToolButton#SectionHeader:checked { background: transparent; border: none; color: $text_muted; }
+QToolButton#FilterTile {
+    background: $bg2; border: 1px solid $border; border-radius: 10px;
+    padding: 4px 2px 6px 2px; color: $text_dim; font-size: 11px;
+}
+QToolButton#FilterTile:hover { border-color: $border_strong; color: $text; }
+QToolButton#FilterTile:checked { border: 2px solid $accent; color: $strong; background: $accent_a16; }
 QToolButton#Swatch { border-radius: 11px; padding: 0; border: 2px solid $border_strong; }
 QToolButton#Swatch:hover { border-color: $strong; }
 

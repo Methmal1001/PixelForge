@@ -82,7 +82,7 @@ class DesignDocumentTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.doc.update_text(text.id, align="justify")
         with self.assertRaises(ValueError):
-            self.doc.update_text(text.id, opacity=0.5)
+            self.doc.update_text(text.id, glow_strength=0.5)
 
     def test_crop_shifts_text_and_resize_scales_it(self) -> None:
         text = self.doc.add_text(TextElement("A", x=60, y=30, font_size=10))

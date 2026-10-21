@@ -147,7 +147,9 @@ class GeminiImageService(ImageGenerationService):
 
     def generate(self, request: GenerationRequest) -> Image.Image:
         request.validate()
+        cancel = self.begin_generation()
         payload = self._call("POST", f"models/{self.model}:generateContent", self.build_body(request))
+        self.raise_if_cancelled(cancel)  # a single HTTP request cannot be interrupted; discard late results
         return self.parse_image(payload)
 
     @staticmethod

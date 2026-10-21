@@ -6,20 +6,22 @@ exported design.
 
 from __future__ import annotations
 
-from PySide6.QtCore import QPointF, QRect, QRectF, Qt, Signal
+import math
+
+from PySide6.QtCore import QPointF, QRect, QRectF, Qt, QTimer, Signal
 from PySide6.QtGui import QBrush, QColor, QImage, QPainter, QPainterPath, QPen, QPixmap, QTransform
 from PySide6.QtWidgets import (
     QGraphicsItem,
     QGraphicsPixmapItem,
     QGraphicsScene,
-    QGraphicsTextItem,
     QGraphicsView,
     QStyle,
     QStyleOptionGraphicsItem,
 )
 
 from models.design import TextElement
-from services.text_renderer import configure_document
+from services.qt_image import pil_to_qimage
+from services.text_renderer import TextLayout
 from ui.pages import dropped_image_path
 from ui.styles import COLORS, is_dark
 
@@ -59,8 +61,12 @@ class ImageItem(QGraphicsPixmapItem):
             painter.drawRect(self.boundingRect())
 
 
-class TextItem(QGraphicsTextItem):
-    """A movable, selectable text overlay bound to a TextElement id."""
+class TextItem(QGraphicsItem):
+    """A movable, selectable text overlay bound to a TextElement id.
+
+    Painting goes through services.text_renderer.TextLayout, the same code the
+    exporter uses, so effects (shadow, outline, background) match the export.
+    """
 
     def __init__(self, element_id: str) -> None:
         super().__init__()
@@ -70,17 +76,35 @@ class TextItem(QGraphicsTextItem):
             | QGraphicsItem.GraphicsItemFlag.ItemIsSelectable
             | QGraphicsItem.GraphicsItemFlag.ItemSendsGeometryChanges
         )
-        self.setTextInteractionFlags(Qt.TextInteractionFlag.NoTextInteraction)
         self.setAcceptHoverEvents(True)
         self.setCursor(Qt.CursorShape.SizeAllCursor)
         self.setToolTip("Drag to move · Double-click to edit text · Delete to remove")
         self._hovered = False
+        self._layout: TextLayout | None = None
+
+    @property
+    def layout(self) -> TextLayout | None:
+        return self._layout
 
     def apply_element(self, element: TextElement) -> None:
         self.prepareGeometryChange()
-        configure_document(self.document(), element)
+        self._layout = TextLayout(element)
         self.setPos(element.x, element.y)
+        self.setTransformOriginPoint(self._layout.text_rect().center())
+        self.setRotation(element.rotation)
         self.update()
+
+    def toPlainText(self) -> str:  # noqa: N802 - kept for compatibility with the old text item
+        return self._layout.element.text if self._layout else ""
+
+    def boundingRect(self) -> QRectF:  # noqa: N802
+        return self._layout.bounding_rect().adjusted(-2, -2, 2, 2) if self._layout else QRectF()
+
+    def shape(self) -> QPainterPath:
+        path = QPainterPath()
+        if self._layout:
+            path.addRect(self._layout.body_rect())
+        return path
 
     def hoverEnterEvent(self, event) -> None:  # noqa: N802
         self._hovered = True
@@ -93,13 +117,15 @@ class TextItem(QGraphicsTextItem):
         super().hoverLeaveEvent(event)
 
     def paint(self, painter, option, widget=None) -> None:
-        super().paint(painter, _without_selection(option), widget)
-        rect = self.boundingRect()
+        if self._layout is None:
+            return
+        self._layout.paint(painter)
+        rect = self._layout.body_rect()
         if self.isSelected():
             painter.setPen(_cosmetic_pen(COLORS["accent"], 1.6))
             painter.setBrush(Qt.BrushStyle.NoBrush)
             painter.drawRect(rect)
-            scale = painter.worldTransform().m11() or 1.0
+            scale = math.hypot(painter.worldTransform().m11(), painter.worldTransform().m12()) or 1.0
             handle = 7 / scale
             painter.setPen(_cosmetic_pen(COLORS["accent"], 1.4))
             painter.setBrush(QColor("#FFFFFF"))
@@ -109,6 +135,104 @@ class TextItem(QGraphicsTextItem):
             painter.setPen(_cosmetic_pen(COLORS["accent_hover"], 1.2, Qt.PenStyle.DashLine))
             painter.setBrush(Qt.BrushStyle.NoBrush)
             painter.drawRect(rect)
+
+
+class ImageLayerItem(QGraphicsPixmapItem):
+    """A movable, resizable picture layer. Drag to move; drag a corner handle to resize."""
+
+    HANDLE_PX = 10  # handle size in screen pixels
+
+    def __init__(self, layer_id: str) -> None:
+        super().__init__()
+        self.layer_id = layer_id
+        self.setTransformationMode(Qt.TransformationMode.SmoothTransformation)
+        self.setShapeMode(QGraphicsPixmapItem.ShapeMode.BoundingRectShape)
+        self.setFlags(
+            QGraphicsItem.GraphicsItemFlag.ItemIsMovable
+            | QGraphicsItem.GraphicsItemFlag.ItemIsSelectable
+            | QGraphicsItem.GraphicsItemFlag.ItemSendsGeometryChanges
+        )
+        self.setAcceptHoverEvents(True)
+        self.setCursor(Qt.CursorShape.SizeAllCursor)
+        self.setToolTip("Drag to move · drag a corner to resize · Delete to remove")
+        self._image_ref = None
+
+    def apply_layer(self, layer) -> None:
+        if layer.image is not self._image_ref:
+            self._image_ref = layer.image
+            self.prepareGeometryChange()
+            self.setPixmap(QPixmap.fromImage(pil_to_qimage(layer.image)))
+        width, height = layer.size
+        self.setPos(layer.x, layer.y)
+        self.setTransformOriginPoint(width / 2, height / 2)
+        self.setScale(layer.scale)
+        self.setRotation(layer.rotation)
+        self.setOpacity(layer.opacity)
+
+    def paint(self, painter, option, widget=None) -> None:
+        super().paint(painter, _without_selection(option), widget)
+        if self.isSelected():
+            rect = self.boundingRect()
+            painter.setPen(_cosmetic_pen(COLORS["accent"], 1.6))
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            painter.drawRect(rect)
+            handle = self.HANDLE_PX / max(1e-6, math.hypot(painter.worldTransform().m11(),
+                                                           painter.worldTransform().m12()))
+            painter.setPen(_cosmetic_pen(COLORS["accent"], 1.4))
+            painter.setBrush(QColor("#FFFFFF"))
+            for corner in (rect.topLeft(), rect.topRight(), rect.bottomLeft(), rect.bottomRight()):
+                painter.drawRect(QRectF(corner.x() - handle / 2, corner.y() - handle / 2, handle, handle))
+
+
+class SelectionOverlay(QGraphicsItem):
+    """Marching-ants outline of the current area selection, with a light dim outside it."""
+
+    def __init__(self, bounds: QRectF) -> None:
+        super().__init__()
+        self.bounds = QRectF(bounds)
+        self.path = QPainterPath()
+        self.mask_image: QImage | None = None
+        self.setZValue(9_000)
+        self._phase = 0.0
+
+    def boundingRect(self) -> QRectF:  # noqa: N802
+        return self.bounds
+
+    def set_path(self, path: QPainterPath) -> None:
+        self.path = path
+        self.mask_image = None
+        self.update()
+
+    def set_mask_image(self, image: QImage | None) -> None:
+        self.mask_image = image
+        self.path = QPainterPath()
+        self.update()
+
+    def has_selection(self) -> bool:
+        return self.mask_image is not None or not self.path.isEmpty()
+
+    def advance_ants(self) -> None:
+        self._phase = (self._phase + 1.5) % 12
+        self.update()
+
+    def paint(self, painter, option, widget=None) -> None:
+        if self.mask_image is not None:
+            painter.drawImage(self.bounds, self.mask_image)
+            return
+        if self.path.isEmpty():
+            return
+        outside = QPainterPath()
+        outside.addRect(self.bounds)
+        painter.fillPath(outside.subtracted(self.path), QColor(6, 7, 12, 90))
+        white = _cosmetic_pen("#FFFFFF", 1.4)
+        painter.setPen(white)
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.drawPath(self.path)
+        dashes = _cosmetic_pen(COLORS["accent"], 1.4, Qt.PenStyle.CustomDashLine)
+        dashes.setDashPattern([4, 4])
+        dashes.setDashOffset(self._phase)
+        painter.setPen(dashes)
+        painter.drawPath(self.path)
 
 
 class CropOverlay(QGraphicsItem):
@@ -173,8 +297,11 @@ class CanvasView(QGraphicsView):
     zoom_changed = Signal(float)
     selection_changed = Signal()
     texts_moved = Signal(dict)       # {element_id: (x, y)} after a drag
+    layers_changed = Signal(dict)    # {layer_id: {"x", "y", "scale"}} after a move/resize
+    wand_clicked = Signal(QPointF, bool)  # image point, add-to-selection (Shift)
     text_activated = Signal(str)     # double-clicked text element id
     crop_changed = Signal(QRect)
+    area_selection_changed = Signal(bool)   # True when an area is selected
     file_dropped = Signal(str)
 
     def __init__(self, parent=None) -> None:
@@ -204,7 +331,21 @@ class CanvasView(QGraphicsView):
         self._checker = _checker_brush()
         self._press_positions: dict[str, QPointF] = {}
         self._pan_origin: QPointF | None = None
+        self._left_pan_start: QPointF | None = None   # left-button pan (zoomed-in image)
+        self._left_pan_moved = False
+        self._left_pan_target = None
         self._crop: CropOverlay | None = None
+        self._select_overlay: SelectionOverlay | None = None
+        self._select_mask = None  # PIL mask for magic-wand selections
+        self._layers: dict[str, ImageLayerItem] = {}
+        self._press_layers: dict[str, tuple[float, float, float]] = {}
+        self._layer_resize: tuple[ImageLayerItem, float, float] | None = None  # item, start distance, scale
+        self._select_shape = "rect"
+        self._select_points: list[QPointF] = []
+        self._select_dragging = False
+        self._ants = QTimer(self)
+        self._ants.setInterval(120)
+        self._ants.timeout.connect(lambda: self._select_overlay and self._select_overlay.advance_ants())
         self._crop_anchor: QPointF | None = None
         self._crop_move_offset: QPointF | None = None
         self._scene.selectionChanged.connect(self.selection_changed)
@@ -231,6 +372,61 @@ class CanvasView(QGraphicsView):
             if self._auto_fit:
                 self.fit_to_view()
         self.viewport().update()
+
+    def sync_layers(self, layers) -> None:
+        ids = {layer.id for layer in layers}
+        for layer_id in list(self._layers):
+            if layer_id not in ids:
+                self._scene.removeItem(self._layers.pop(layer_id))
+        interactive = self._crop is None and self._select_overlay is None
+        for index, layer in enumerate(layers):
+            item = self._layers.get(layer.id)
+            if item is None:
+                item = ImageLayerItem(layer.id)
+                self._layers[layer.id] = item
+                self._scene.addItem(item)
+                self._set_item_interactive(item, interactive)
+            item.apply_layer(layer)
+            item.setZValue(5 + index * 0.001)
+
+    def select_layer(self, layer_id: str) -> None:
+        item = self._layers.get(layer_id)
+        if item is not None:
+            self._scene.clearSelection()
+            item.setSelected(True)
+
+    def selected_layer_id(self) -> str | None:
+        for item in self._scene.selectedItems():
+            if isinstance(item, ImageLayerItem):
+                return item.layer_id
+        return None
+
+    def _layer_handle_at(self, view_pos) -> ImageLayerItem | None:
+        """The selected image layer whose corner handle is under ``view_pos`` (within 10 px)."""
+        layer_id = self.selected_layer_id()
+        item = self._layers.get(layer_id) if layer_id else None
+        if item is None or self._crop is not None or self._select_overlay is not None:
+            return None
+        rect = item.boundingRect()
+        for corner in (rect.topLeft(), rect.topRight(), rect.bottomLeft(), rect.bottomRight()):
+            point = self.mapFromScene(item.mapToScene(corner))
+            if abs(point.x() - view_pos.x()) <= 10 and abs(point.y() - view_pos.y()) <= 10:
+                return item
+        return None
+
+    def _distance_to_center(self, item: ImageLayerItem, view_pos) -> float:
+        center = item.mapToScene(item.boundingRect().center())
+        scene = self.mapToScene(view_pos)
+        return math.hypot(scene.x() - center.x(), scene.y() - center.y())
+
+    @staticmethod
+    def _set_item_interactive(item: QGraphicsItem, interactive: bool) -> None:
+        item.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsMovable, interactive)
+        item.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable, interactive)
+        if interactive:
+            item.setCursor(Qt.CursorShape.SizeAllCursor)
+        else:
+            item.unsetCursor()
 
     def sync_texts(self, texts: list[TextElement]) -> None:
         ids = {t.id for t in texts}
@@ -267,8 +463,116 @@ class CanvasView(QGraphicsView):
     def is_image_selected(self) -> bool:
         return self._image_item.isSelected()
 
+    # ------------------------------------------------------------------ area selection
+
+    @property
+    def in_select_mode(self) -> bool:
+        return self._select_overlay is not None
+
+    def enter_select_mode(self, shape: str = "rect") -> None:
+        if not self.has_image or self._select_overlay is not None:
+            return
+        self.exit_crop_mode()
+        self._scene.clearSelection()
+        self._select_shape = shape
+        self._select_points = []
+        self._select_overlay = SelectionOverlay(self.image_rect())
+        self._scene.addItem(self._select_overlay)
+        for item in [*self._texts.values(), *self._layers.values()]:
+            self._set_item_interactive(item, False)
+        self._image_item.unsetCursor()
+        self.viewport().setCursor(Qt.CursorShape.CrossCursor)
+        self._ants.start()
+        self.area_selection_changed.emit(False)
+
+    def exit_select_mode(self) -> None:
+        if self._select_overlay is None:
+            return
+        self._ants.stop()
+        self._scene.removeItem(self._select_overlay)
+        self._select_overlay = None
+        self._select_points = []
+        self._select_mask = None
+        for item in [*self._texts.values(), *self._layers.values()]:
+            self._set_item_interactive(item, True)
+        self.viewport().unsetCursor()
+        self._update_idle_cursor()
+        self.area_selection_changed.emit(False)
+
+    def set_select_shape(self, shape: str) -> None:
+        self._select_shape = shape
+        self.clear_area_selection()
+
+    def set_mask_selection(self, mask) -> None:
+        """Show a magic-wand mask as the selection (selected area tinted, outside dimmed)."""
+        from PIL import Image as PILImage, ImageChops, ImageFilter
+
+        if self._select_overlay is None:
+            return
+        self._select_mask = mask
+        if mask is None or mask.getbbox() is None:
+            self.clear_area_selection()
+            return
+        small = mask if max(mask.size) <= 1400 else mask.resize(
+            (max(1, mask.width * 1400 // max(mask.size)), max(1, mask.height * 1400 // max(mask.size))))
+        edges = small.point(lambda v: 255 if v > 127 else 0).filter(ImageFilter.FIND_EDGES)
+        edges = edges.filter(ImageFilter.MaxFilter(3))
+        dim = PILImage.new("RGBA", small.size, (6, 7, 12, 110))
+        dim.putalpha(ImageChops.multiply(PILImage.new("L", small.size, 110), small.point(lambda v: 255 - v)))
+        tint = PILImage.new("RGBA", small.size, (124, 92, 255, 0))
+        tint.putalpha(small.point(lambda v: v * 50 // 255))
+        overlay = PILImage.alpha_composite(dim, tint)
+        outline = PILImage.new("RGBA", small.size, (255, 255, 255, 255))
+        outline.putalpha(edges)
+        overlay = PILImage.alpha_composite(overlay, outline)
+        self._select_overlay.set_mask_image(pil_to_qimage(overlay))
+        self.area_selection_changed.emit(True)
+
+    def selection_mask(self):
+        return self._select_mask
+
+    def clear_area_selection(self) -> None:
+        self._select_points = []
+        self._select_mask = None
+        if self._select_overlay is not None:
+            self._select_overlay.set_path(QPainterPath())
+        self.area_selection_changed.emit(False)
+
+    def area_selection(self) -> tuple[str, list[tuple[float, float]]] | None:
+        """(shape, points in image pixels) of the current selection, or None."""
+        if self._select_overlay is None or not self._select_overlay.has_selection():
+            return None
+        if self._select_mask is not None:
+            return "mask", self._select_mask
+        return self._select_shape, [(p.x(), p.y()) for p in self._select_points]
+
+    def _selection_path(self) -> QPainterPath:
+        path = QPainterPath()
+        points = self._select_points
+        if self._select_shape == "lasso":
+            if len(points) >= 2:
+                path.moveTo(points[0])
+                for point in points[1:]:
+                    path.lineTo(point)
+                path.closeSubpath()
+        elif len(points) >= 2:
+            rect = QRectF(points[0], points[-1]).normalized()
+            if self._select_shape == "ellipse":
+                path.addEllipse(rect)
+            else:
+                path.addRect(rect)
+        return path
+
+    def _is_valid_selection(self) -> bool:
+        rect = self._selection_path().boundingRect()
+        return rect.width() >= 4 and rect.height() >= 4
+
     def clear_canvas(self) -> None:
         self.exit_crop_mode()
+        self.exit_select_mode()
+        for item in self._layers.values():
+            self._scene.removeItem(item)
+        self._layers.clear()
         for item in self._texts.values():
             self._scene.removeItem(item)
         self._texts.clear()
@@ -294,6 +598,7 @@ class CanvasView(QGraphicsView):
         self.setTransformationAnchor(QGraphicsView.ViewportAnchor.AnchorUnderMouse)
         self._zoom = value
         self.zoom_changed.emit(value)
+        self._update_idle_cursor()
 
     def zoom_in(self) -> None:
         self._auto_fit = False
@@ -320,6 +625,27 @@ class CanvasView(QGraphicsView):
 
     def actual_size(self) -> None:
         self.zoom_to(1.0)
+
+    def can_pan(self) -> bool:
+        """True when the zoomed image is larger than the visible canvas area."""
+        if not self.has_image:
+            return False
+        shown = self.mapFromScene(self.image_rect()).boundingRect()
+        area = self.viewport().rect()
+        return shown.width() > area.width() + 1 or shown.height() > area.height() + 1
+
+    def _update_idle_cursor(self) -> None:
+        """Open-hand cursor over the image whenever it can be dragged around.
+
+        The cursor lives on the image item (not the viewport) so Qt's own item-cursor
+        handling keeps it correct when the mouse moves on and off text layers.
+        """
+        if self._crop is not None or self._select_overlay is not None or self._left_pan_start is not None:
+            return
+        if self.can_pan():
+            self._image_item.setCursor(Qt.CursorShape.OpenHandCursor)
+        else:
+            self._image_item.unsetCursor()
 
     def resizeEvent(self, event) -> None:  # noqa: N802
         super().resizeEvent(event)
@@ -369,6 +695,7 @@ class CanvasView(QGraphicsView):
     def enter_crop_mode(self) -> None:
         if not self.has_image or self._crop is not None:
             return
+        self.exit_select_mode()
         self._scene.clearSelection()
         self._crop = CropOverlay(self.image_rect())
         rect = self.image_rect()
@@ -377,6 +704,7 @@ class CanvasView(QGraphicsView):
         self._scene.addItem(self._crop)
         for item in self._texts.values():
             item.unsetCursor()
+        self._image_item.unsetCursor()
         self.viewport().setCursor(Qt.CursorShape.CrossCursor)
         self.crop_changed.emit(self.crop_selection())
 
@@ -389,6 +717,7 @@ class CanvasView(QGraphicsView):
         for item in self._texts.values():
             item.setCursor(Qt.CursorShape.SizeAllCursor)
         self.viewport().unsetCursor()
+        self._update_idle_cursor()  # after leaving crop mode
 
     def crop_selection(self) -> QRect:
         """Current crop selection in whole image pixels, clamped to the image."""
@@ -419,6 +748,22 @@ class CanvasView(QGraphicsView):
             self.viewport().setCursor(Qt.CursorShape.ClosedHandCursor)
             event.accept()
             return
+        if self._select_overlay is not None:
+            if event.button() == Qt.MouseButton.LeftButton and self._select_shape == "wand":
+                point = self.mapToScene(event.position().toPoint())
+                if self.image_rect().contains(point):
+                    additive = bool(event.modifiers() & Qt.KeyboardModifier.ShiftModifier)
+                    self.wand_clicked.emit(point, additive)
+                event.accept()
+                return
+            if event.button() == Qt.MouseButton.LeftButton:
+                point = self._clamp_to_image(self.mapToScene(event.position().toPoint()))
+                self._select_mask = None
+                self._select_points = [point, point]
+                self._select_dragging = True
+                self._select_overlay.set_path(QPainterPath())
+            event.accept()
+            return
         if self._crop is not None:
             if event.button() == Qt.MouseButton.LeftButton:
                 point = self.mapToScene(event.position().toPoint())
@@ -429,15 +774,64 @@ class CanvasView(QGraphicsView):
                     self._crop.set_selection(QRectF(self._crop_anchor, self._crop_anchor))
             event.accept()
             return
+        if event.button() == Qt.MouseButton.LeftButton:
+            item = self._layer_handle_at(event.position().toPoint())
+            if item is not None:
+                self._press_layers = {lid: (it.pos().x(), it.pos().y(), it.scale())
+                                      for lid, it in self._layers.items()}
+                self._layer_resize = (item, max(1.0, self._distance_to_center(item, event.position().toPoint())),
+                                      item.scale())
+                event.accept()
+                return
+        if event.button() == Qt.MouseButton.LeftButton and self.can_pan():
+            target = self.itemAt(event.position().toPoint())
+            if not isinstance(target, (TextItem, ImageLayerItem)):
+                self._left_pan_start = event.position()
+                self._left_pan_moved = False
+                self._left_pan_target = target
+                self._pan_origin = event.position()
+                self._image_item.setCursor(Qt.CursorShape.ClosedHandCursor)
+                self.viewport().setCursor(Qt.CursorShape.ClosedHandCursor)
+                event.accept()
+                return
         self._press_positions = {eid: QPointF(item.pos()) for eid, item in self._texts.items()}
+        self._press_layers = {lid: (item.pos().x(), item.pos().y(), item.scale())
+                              for lid, item in self._layers.items()}
         super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event) -> None:  # noqa: N802
+        if self._layer_resize is not None:
+            item, start_distance, start_scale = self._layer_resize
+            distance = self._distance_to_center(item, event.position().toPoint())
+            item.setScale(min(20.0, max(0.02, start_scale * distance / start_distance)))
+            event.accept()
+            return
+        if not event.buttons():
+            if self._layer_handle_at(event.position().toPoint()) is not None:
+                self.viewport().setCursor(Qt.CursorShape.SizeFDiagCursor)
+                self._handle_cursor = True
+            elif getattr(self, "_handle_cursor", False):
+                self._handle_cursor = False
+                self.viewport().unsetCursor()
         if self._pan_origin is not None:
+            if self._left_pan_start is not None and not self._left_pan_moved:
+                travel = event.position() - self._left_pan_start
+                self._left_pan_moved = abs(travel.x()) + abs(travel.y()) > 3
             delta = event.position() - self._pan_origin
             self._pan_origin = event.position()
             self.horizontalScrollBar().setValue(self.horizontalScrollBar().value() - int(delta.x()))
             self.verticalScrollBar().setValue(self.verticalScrollBar().value() - int(delta.y()))
+            event.accept()
+            return
+        if self._select_overlay is not None:
+            if self._select_dragging:
+                point = self._clamp_to_image(self.mapToScene(event.position().toPoint()))
+                if self._select_shape == "lasso":
+                    if (point - self._select_points[-1]).manhattanLength() > 2 / max(self._zoom, 0.01):
+                        self._select_points.append(point)
+                else:
+                    self._select_points[-1] = point
+                self._select_overlay.set_path(self._selection_path())
             event.accept()
             return
         if self._crop is not None:
@@ -459,12 +853,47 @@ class CanvasView(QGraphicsView):
         super().mouseMoveEvent(event)
 
     def mouseReleaseEvent(self, event) -> None:  # noqa: N802
+        if self._layer_resize is not None and event.button() == Qt.MouseButton.LeftButton:
+            item = self._layer_resize[0]
+            self._layer_resize = None
+            before = self._press_layers.get(item.layer_id)
+            self._press_layers = {}
+            if before is not None and abs(before[2] - item.scale()) > 1e-6:
+                self.layers_changed.emit({item.layer_id: {"x": item.pos().x(), "y": item.pos().y(),
+                                                          "scale": round(item.scale(), 4)}})
+            event.accept()
+            return
+        if self._left_pan_start is not None and event.button() == Qt.MouseButton.LeftButton:
+            if not self._left_pan_moved:  # a plain click: behave like a normal selection click
+                self._scene.clearSelection()
+                if isinstance(self._left_pan_target, ImageItem):
+                    self._left_pan_target.setSelected(True)
+            self._left_pan_start = None
+            self._left_pan_target = None
+            self._pan_origin = None
+            self.viewport().unsetCursor()
+            self._update_idle_cursor()
+            event.accept()
+            return
         if self._pan_origin is not None and event.button() == Qt.MouseButton.MiddleButton:
             self._pan_origin = None
             if self._crop is not None:
                 self.viewport().setCursor(Qt.CursorShape.CrossCursor)
             else:
                 self.viewport().unsetCursor()
+                self._update_idle_cursor()
+            event.accept()
+            return
+        if self._select_overlay is not None and self._select_shape == "wand":
+            event.accept()
+            return
+        if self._select_overlay is not None and event.button() == Qt.MouseButton.LeftButton:
+            self._select_dragging = False
+            if self._is_valid_selection():
+                self._select_overlay.set_path(self._selection_path())
+                self.area_selection_changed.emit(True)
+            else:
+                self.clear_area_selection()
             event.accept()
             return
         if self._crop is not None:
@@ -485,6 +914,15 @@ class CanvasView(QGraphicsView):
         self._press_positions = {}
         if moved:
             self.texts_moved.emit(moved)
+        changed = {}
+        for lid, item in self._layers.items():
+            before = self._press_layers.get(lid)
+            now = (item.pos().x(), item.pos().y(), item.scale())
+            if before is not None and any(abs(a - b) > 1e-6 for a, b in zip(before, now)):
+                changed[lid] = {"x": now[0], "y": now[1], "scale": round(now[2], 4)}
+        self._press_layers = {}
+        if changed:
+            self.layers_changed.emit(changed)
 
     def mouseDoubleClickEvent(self, event) -> None:  # noqa: N802
         if self._crop is None:

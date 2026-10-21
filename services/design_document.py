@@ -2,18 +2,26 @@
 
 from __future__ import annotations
 
+import uuid
 from collections.abc import Callable
 from dataclasses import fields, replace
 from pathlib import Path
 
 from PIL import Image
 
-from models.design import TEXT_ALIGNMENTS, Adjustments, DesignState, TextElement
+from models.design import TEXT_ALIGNMENTS, Adjustments, DesignState, ImageLayer, TextElement
 from services import image_processor as ip
+from services import region_tools
 
 PointMap = Callable[[float, float], tuple[float, float]]
 
 _TEXT_FIELDS = {f.name for f in fields(TextElement)} - {"id"}
+_TEXT_RANGES = (
+    ("opacity", 0.0, 1.0), ("line_height", 0.3, 3.0), ("letter_spacing", -20.0, 100.0),
+    ("rotation", -360.0, 360.0), ("shadow_opacity", 0.0, 1.0), ("background_opacity", 0.0, 1.0),
+    ("shadow_distance", 0.0, 100.0), ("shadow_blur", 0.0, 100.0), ("outline_width", 0.0, 50.0),
+    ("background_padding", 0.0, 200.0), ("background_radius", 0.0, 200.0),
+)
 
 
 def estimate_text_size(element: TextElement) -> tuple[float, float]:
@@ -141,6 +149,11 @@ class DesignDocument:
             est_w, est_h = estimate_text_size(text)
             text.x = min(max(cx - est_w / 2, 0.0), max(new_w - 1.0, 0.0))
             text.y = min(max(cy - est_h / 2, 0.0), max(new_h - 1.0, 0.0))
+        for layer in self.state.layers:
+            w, h = layer.size
+            cx, cy = point_map(layer.x + w / 2, layer.y + h / 2)
+            layer.scale = max(0.02, layer.scale * font_scale)
+            layer.x, layer.y = cx - w / 2, cy - h / 2
         self.state.base = new_base
         self.modified = True
 
@@ -174,13 +187,36 @@ class DesignDocument:
     def flip_horizontal(self, record: bool = True) -> None:
         self._apply_geometry(ip.flip_horizontal(self.state.base), lambda x, y: (x, y), record=record)
 
+    def edit_region(self, shape: str, points, operation: str, record: bool = True, **options) -> None:
+        """Apply an area operation (adjust, blur, sharpen, remove, fill, erase) inside a selection."""
+        mask = region_tools.build_mask(self.size, shape, points)
+        new_base = region_tools.apply_region(self.state.base, mask, operation, **options)
+        if record:
+            self.checkpoint()
+        self.state.base = new_base
+        self.modified = True
+
+    def crop_to_selection(self, points, record: bool = True) -> None:
+        if isinstance(points, Image.Image):  # magic-wand mask
+            left, top, right, bottom = region_tools.mask_bbox(points)
+        else:
+            left, top, right, bottom = region_tools.selection_bbox(points, self.size)
+        self.crop(left, top, right - left, bottom - top, record=record)
+
+    def rotate_angle(self, degrees: float, record: bool = True) -> None:
+        """Rotate clockwise by any angle; the canvas grows to fit and text keeps its place."""
+        old_w, old_h = self.size
+        new_base = ip.rotate_free(self.state.base, degrees)
+        dx, dy = (new_base.width - old_w) / 2, (new_base.height - old_h) / 2
+        self._apply_geometry(new_base, lambda x, y: (x + dx, y + dy), record=record)
+
     def flip_vertical(self, record: bool = True) -> None:
         self._apply_geometry(ip.flip_vertical(self.state.base), lambda x, y: (x, y), record=record)
 
     # ------------------------------------------------------------------ adjustments
 
     def set_adjustments(self, adjustments: Adjustments, record: bool = False) -> None:
-        for name in ("brightness", "contrast", "saturation"):
+        for name in ("brightness", "contrast", "saturation", "sharpness"):
             ip._validate_factor(getattr(adjustments, name), name.capitalize())
         if adjustments == self.state.adjustments:
             return
@@ -206,6 +242,128 @@ class DesignDocument:
         for text in self.state.texts:
             text.x = min(max(text.x, 0.0), w - 1.0)
             text.y = min(max(text.y, 0.0), h - 1.0)
+        self.modified = True
+
+
+    # ------------------------------------------------------------------ image layers
+
+    def get_layer(self, layer_id: str) -> ImageLayer | None:
+        return next((layer for layer in self.state.layers if layer.id == layer_id), None)
+
+    def _layer_from_selection(self, shape: str, data, cut: bool, record: bool) -> ImageLayer:
+        mask = region_tools.build_mask(self.size, shape, data)
+        piece, (left, top) = region_tools.extract_layer(self.rendered(), mask)
+        if record:
+            self.checkpoint()
+        if cut:
+            self.state.base = region_tools.apply_region(self.state.base, mask, "remove")
+        number = len(self.state.layers) + 1
+        layer = ImageLayer(image=piece, x=float(left), y=float(top), name=f"Layer {number}")
+        self.state.layers.append(layer)
+        self.modified = True
+        return layer
+
+    def copy_to_layer(self, shape: str, data, record: bool = True) -> ImageLayer:
+        """Photoshop "Layer via Copy": the selection becomes a new movable layer."""
+        return self._layer_from_selection(shape, data, cut=False, record=record)
+
+    def cut_to_layer(self, shape: str, data, record: bool = True) -> ImageLayer:
+        """Photoshop "Layer via Cut": the selection becomes a layer and the hole is filled."""
+        return self._layer_from_selection(shape, data, cut=True, record=record)
+
+    def add_image_layer(self, image: Image.Image, name: str = "Image", record: bool = True) -> ImageLayer:
+        """Place a picture (e.g. a logo) centred on the canvas as a new layer."""
+        piece = image.convert("RGBA")
+        scale = min(1.0, 0.5 * min(self.width / piece.width, self.height / piece.height))
+        layer = ImageLayer(image=piece, x=(self.width - piece.width) / 2, y=(self.height - piece.height) / 2,
+                           scale=round(scale, 3), name=name)
+        if record:
+            self.checkpoint()
+        self.state.layers.append(layer)
+        self.modified = True
+        return layer
+
+    def update_layer(self, layer_id: str, record: bool = False, **changes) -> ImageLayer:
+        layer = self.get_layer(layer_id)
+        if layer is None:
+            raise KeyError(layer_id)
+        allowed = {"x", "y", "scale", "rotation", "opacity", "name", "image"}
+        unknown = set(changes) - allowed
+        if unknown:
+            raise ValueError(f"Unknown layer properties: {', '.join(sorted(unknown))}")
+        if "scale" in changes and not 0.02 <= float(changes["scale"]) <= 20:
+            raise ValueError("Layer scale must be between 2% and 2000%.")
+        if "opacity" in changes and not 0 <= float(changes["opacity"]) <= 1:
+            raise ValueError("Layer opacity must be between 0 and 1.")
+        if record:
+            self.checkpoint()
+        updated = replace(layer, **changes)
+        self.state.layers[self.state.layers.index(layer)] = updated
+        self.modified = True
+        return updated
+
+    def move_layers(self, changes: dict[str, dict], record: bool = True) -> None:
+        """Apply several layer changes (e.g. after a drag or resize) as one undo step."""
+        if not changes:
+            return
+        if record:
+            self.checkpoint()
+        for layer_id, values in changes.items():
+            if self.get_layer(layer_id) is not None:
+                self.update_layer(layer_id, record=False, **values)
+
+    def flip_layer(self, layer_id: str, record: bool = True) -> ImageLayer:
+        layer = self.get_layer(layer_id)
+        if layer is None:
+            raise KeyError(layer_id)
+        return self.update_layer(layer_id, record=record, image=ip.flip_horizontal(layer.image))
+
+    def duplicate_layer(self, layer_id: str, record: bool = True) -> ImageLayer:
+        layer = self.get_layer(layer_id)
+        if layer is None:
+            raise KeyError(layer_id)
+        if record:
+            self.checkpoint()
+        copy = replace(layer, id=uuid.uuid4().hex, x=layer.x + 30, y=layer.y + 30, name=f"{layer.name} copy")
+        self.state.layers.append(copy)
+        self.modified = True
+        return copy
+
+    def move_layer_order(self, layer_id: str, step: int, record: bool = True) -> bool:
+        layers = self.state.layers
+        layer = self.get_layer(layer_id)
+        if layer is None:
+            raise KeyError(layer_id)
+        index = layers.index(layer)
+        target = max(0, min(len(layers) - 1, index + step))
+        if target == index:
+            return False
+        if record:
+            self.checkpoint()
+        layers.insert(target, layers.pop(index))
+        self.modified = True
+        return True
+
+    def remove_layer(self, layer_id: str, record: bool = True) -> bool:
+        if self.get_layer(layer_id) is None:
+            return False
+        if record:
+            self.checkpoint()
+        self.state.layers = [layer for layer in self.state.layers if layer.id != layer_id]
+        self.modified = True
+        return True
+
+    def merge_layer(self, layer_id: str, record: bool = True) -> None:
+        """Flatten a layer into the background image (it is no longer movable)."""
+        from services.layer_renderer import composite_layer
+
+        layer = self.get_layer(layer_id)
+        if layer is None:
+            raise KeyError(layer_id)
+        if record:
+            self.checkpoint()
+        self.state.base = composite_layer(self.state.base, layer)
+        self.state.layers = [item for item in self.state.layers if item.id != layer_id]
         self.modified = True
 
     # ------------------------------------------------------------------ text
@@ -240,6 +398,11 @@ class DesignDocument:
             raise ValueError("Font size must be at least 1 pixel.")
         if "align" in changes and changes["align"] not in TEXT_ALIGNMENTS:
             raise ValueError(f"Alignment must be one of {', '.join(TEXT_ALIGNMENTS)}.")
+        for name, low, high in _TEXT_RANGES:
+            if name in changes:
+                value = float(changes[name])
+                if not low <= value <= high:
+                    raise ValueError(f"{name.replace('_', ' ').capitalize()} must be between {low:g} and {high:g}.")
         if record:
             self.checkpoint()
         updated = replace(element, **changes)
@@ -247,6 +410,35 @@ class DesignDocument:
         self.state.texts[index] = updated
         self.modified = True
         return updated
+
+    def duplicate_text(self, text_id: str, offset: float = 24.0, record: bool = True) -> TextElement:
+        """Copy a text layer (placed slightly offset, on top of the others)."""
+        element = self.get_text(text_id)
+        if element is None:
+            raise KeyError(text_id)
+        if record:
+            self.checkpoint()
+        copy = replace(element, id=uuid.uuid4().hex, x=element.x + offset, y=element.y + offset)
+        self.state.texts.append(copy)
+        self.modified = True
+        return copy
+
+    def move_text_layer(self, text_id: str, step: int, record: bool = True) -> bool:
+        """Move a layer up (+1) or down (-1) in the stacking order. Returns False at the ends."""
+        texts = self.state.texts
+        element = self.get_text(text_id)
+        if element is None:
+            raise KeyError(text_id)
+        index = texts.index(element)
+        target = max(0, min(len(texts) - 1, index + step))
+        if target == index:
+            return False
+        if record:
+            self.checkpoint()
+        texts = self.state.texts
+        texts.insert(target, texts.pop(index))
+        self.modified = True
+        return True
 
     def move_texts(self, positions: dict[str, tuple[float, float]], record: bool = True) -> None:
         if not positions:

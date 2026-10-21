@@ -9,7 +9,8 @@ from pathlib import Path
 from PIL import Image, ImageColor
 from PySide6.QtGui import QPainter
 
-from models.design import TextElement
+from models.design import ImageLayer, TextElement
+from services.layer_renderer import paint_layer
 from services.image_processor import ImageProcessingError, fit_to_size, has_transparency
 from services.qt_image import pil_to_qimage, qimage_to_pil
 from services.text_renderer import ensure_gui_application, paint_text
@@ -48,10 +49,12 @@ def parse_color(value: str) -> tuple[int, int, int]:
         raise ExportError(f"“{value}” is not a valid colour.") from exc
 
 
-def compose_design(base: Image.Image, texts: Iterable[TextElement]) -> Image.Image:
-    """Render text overlays onto a copy of ``base``. Returns an RGBA image."""
+def compose_design(base: Image.Image, texts: Iterable[TextElement],
+                   layers: Iterable[ImageLayer] = ()) -> Image.Image:
+    """Render image layers, then text overlays, onto a copy of ``base``. Returns an RGBA image."""
     texts = list(texts)
-    if not texts:
+    layers = list(layers)
+    if not texts and not layers:
         return base.convert("RGBA")
     ensure_gui_application()
     canvas = pil_to_qimage(base)
@@ -62,6 +65,8 @@ def compose_design(base: Image.Image, texts: Iterable[TextElement]) -> Image.Ima
         | QPainter.RenderHint.SmoothPixmapTransform
     )
     try:
+        for layer in layers:
+            paint_layer(painter, layer)
         for element in texts:
             paint_text(painter, element)
     finally:
@@ -118,10 +123,11 @@ def save_image(
     return target
 
 
-def export_design(base: Image.Image, texts: Iterable[TextElement], options: ExportOptions) -> Path:
+def export_design(base: Image.Image, texts: Iterable[TextElement], options: ExportOptions,
+                  layers: Iterable[ImageLayer] = ()) -> Path:
     """Compose, resize to the requested output dimensions and save the design."""
     fmt = normalize_format(options.image_format)
-    composed = compose_design(base, texts)
+    composed = compose_design(base, texts, layers)
     width = options.width or composed.width
     height = options.height or composed.height
     if (width, height) != composed.size:

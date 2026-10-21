@@ -9,12 +9,15 @@ from __future__ import annotations
 
 import json
 import re
+import threading
 from abc import ABC, abstractmethod
 from dataclasses import asdict, dataclass
 from datetime import datetime
 from pathlib import Path
 
 from PIL import Image
+
+from models.brand import BrandDetails
 
 MAX_PROMPT_LENGTH = 2000
 
@@ -69,6 +72,10 @@ class GenerationQuotaError(GenerationError):
     """The API key has no remaining (or no) quota for the request."""
 
 
+class GenerationCancelledError(GenerationError):
+    """The user stopped the generation."""
+
+
 @dataclass(frozen=True)
 class GenerationRequest:
     prompt: str
@@ -76,8 +83,11 @@ class GenerationRequest:
     art_style: str
     aspect_ratio: str
     reference_image: Path | None = None
+    brand: BrandDetails | None = None
 
     def validate(self) -> None:
+        if self.brand is not None:
+            self.brand.validate()
         prompt = self.prompt.strip()
         if not prompt:
             raise ValueError("Describe the design you want before generating.")
@@ -95,8 +105,14 @@ PRESET_ASPECT_RATIOS = {"square": "1:1", "portrait": "4:5", "story": "9:16", "la
 
 # Provider ids stored as AI_PROVIDER in .env
 PROVIDERS = {
-    "gemini": "Google Gemini (your API key)",
     "pollinations": "Pollinations.ai (free, no key)",
+    "manus": "Manus AI (your API key, uses credits)",
+    "gemini": "Google Gemini (your API key)",
+}
+# provider -> (.env key holding the API key, .env key holding the model/profile)
+PROVIDER_SETTINGS = {
+    "gemini": ("GEMINI_API_KEY", "GEMINI_IMAGE_MODEL"),
+    "manus": ("MANUS_API_KEY", "MANUS_AGENT_PROFILE"),
 }
 
 
@@ -113,6 +129,8 @@ def compose_prompt(request: GenerationRequest, with_reference: bool = False) -> 
     if with_reference:
         lines.append("Use the attached reference image as visual guidance for the product, colours "
                      "or composition.")
+    if request.brand is not None and not request.brand.is_empty:
+        lines.append(request.brand.prompt_section())
     return "\n".join(lines)
 
 
@@ -131,6 +149,29 @@ class ImageGenerationService(ABC):
     @abstractmethod
     def generate(self, request: GenerationRequest) -> Image.Image:
         """Generate an image for ``request``. Raises GenerationError on failure."""
+
+    # --- cancellation: each generate() call gets its own event, so stopping one run
+    # never affects a later run on the same service object.
+    _cancel_event: threading.Event | None = None
+
+    def begin_generation(self) -> threading.Event:
+        event = threading.Event()
+        self._cancel_event = event
+        return event
+
+    def cancel(self) -> None:
+        """Ask the running generation to stop (safe to call from the GUI thread)."""
+        if self._cancel_event is not None:
+            self._cancel_event.set()
+
+    @staticmethod
+    def raise_if_cancelled(event: threading.Event | None) -> None:
+        if event is not None and event.is_set():
+            raise GenerationCancelledError("Generation stopped.")
+
+    def ready_detail(self) -> str:
+        """One line shown in the Generate panel when this provider is ready."""
+        return f"Model: {self.model}. Each Generate sends one request using your API key."
 
 
 class NotConfiguredGenerationService(ImageGenerationService):
@@ -165,6 +206,12 @@ def get_generation_service() -> ImageGenerationService:
         from services.pollinations_provider import PollinationsImageService
 
         return PollinationsImageService()
+    if provider == "manus":
+        from services.manus_provider import DEFAULT_PROFILE, ManusImageService
+
+        api_key = get_setting("MANUS_API_KEY")
+        if api_key:
+            return ManusImageService(api_key, get_setting("MANUS_AGENT_PROFILE") or DEFAULT_PROFILE)
     if provider == "gemini":
         from services.gemini_provider import DEFAULT_MODEL, GeminiImageService
 
@@ -184,6 +231,8 @@ def save_generation(image: Image.Image, request: GenerationRequest, model: str,
     image.save(image_path, "PNG")
     meta = asdict(request)
     meta["reference_image"] = str(request.reference_image) if request.reference_image else None
+    if request.brand is None:
+        meta.pop("brand", None)
     meta.update(model=model, created=datetime.now().isoformat(timespec="seconds"),
                 width=image.width, height=image.height)
     (folder / f"{stem}.json").write_text(json.dumps(meta, indent=2), encoding="utf-8")

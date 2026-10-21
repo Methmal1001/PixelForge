@@ -22,6 +22,7 @@ from PySide6.QtWidgets import (
 from app_info import APP_NAME, APP_STAGE, APP_VERSION
 from models.presets import SIZE_PRESETS
 from services.gemini_provider import IMAGE_MODELS
+from services.manus_provider import AGENT_PROFILES
 from services.generation_service import PROVIDERS
 from services.image_processor import supported_extensions
 from ui.icons import pixmap, set_pixmap
@@ -368,7 +369,7 @@ class SettingsPage(QWidget):
     theme_selected = Signal(str)
     provider_saved = Signal(str, str, str)           # provider, api key ("" keeps saved key), model
     provider_test_requested = Signal(str, str, str)  # provider, api key ("" uses saved key), model
-    provider_removed = Signal()
+    provider_removed = Signal(str)               # provider
 
     DESCRIPTIONS = {
         "dark": "Dark grey studio theme — easy on the eyes for long sessions.",
@@ -457,14 +458,13 @@ class SettingsPage(QWidget):
         self.provider_combo.currentIndexChanged.connect(self._on_provider_changed)
         pbox.addWidget(self.provider_combo)
 
-        # --- Gemini fields
-        self._gemini_box = QWidget()
-        gbox = QVBoxLayout(self._gemini_box)
+        # --- API-key providers (Gemini, Manus)
+        self._key_box = QWidget()
+        gbox = QVBoxLayout(self._key_box)
         gbox.setContentsMargins(0, 4, 0, 0)
         gbox.setSpacing(10)
-        gbox.addWidget(label("Paste a Google AI Studio API key (aistudio.google.com/apikey). It is stored "
-                             "only in the local .env file, which is excluded from git. Image generation "
-                             "needs billing enabled on the key's project.", "Muted", wrap=True))
+        self._key_help = label("", "Muted", wrap=True)
+        gbox.addWidget(self._key_help)
         gbox.addWidget(section_title("API key"))
         key_row = QHBoxLayout()
         key_row.setSpacing(8)
@@ -477,12 +477,12 @@ class SettingsPage(QWidget):
         self._show_key.toggled.connect(self._toggle_key_visibility)
         key_row.addWidget(self._show_key)
         gbox.addLayout(key_row)
-        gbox.addWidget(section_title("Image model"))
+        self._model_title = section_title("Image model")
+        gbox.addWidget(self._model_title)
         self.model_combo = QComboBox()
-        for model_id, model_name in IMAGE_MODELS.items():
-            self.model_combo.addItem(f"{model_name}  ·  {model_id}", model_id)
         gbox.addWidget(self.model_combo)
-        pbox.addWidget(self._gemini_box)
+        pbox.addWidget(self._key_box)
+        self._gemini_box = self._key_box  # backwards-compatible name
 
         # --- Pollinations notes
         self._pollinations_box = QWidget()
@@ -513,8 +513,8 @@ class SettingsPage(QWidget):
                                        "Check the provider is reachable (generates no image)")
         self.test_button.clicked.connect(lambda: self.provider_test_requested.emit(
             self.provider_combo.currentData(), self.key_edit.text().strip(), self.model_combo.currentData()))
-        self.remove_button = make_button("Remove Gemini Key", "danger", "trash")
-        self.remove_button.clicked.connect(self.provider_removed)
+        self.remove_button = make_button("Remove Key", "danger", "trash")
+        self.remove_button.clicked.connect(lambda: self.provider_removed.emit(self.provider_combo.currentData()))
         actions.addWidget(save)
         actions.addWidget(self.test_button)
         actions.addStretch(1)
@@ -556,33 +556,60 @@ class SettingsPage(QWidget):
         self.key_edit.setEchoMode(QLineEdit.EchoMode.Normal if visible else QLineEdit.EchoMode.Password)
         self._show_key.setText("Hide" if visible else "Show")
 
-    def _on_provider_changed(self, _index: int = 0) -> None:
-        gemini = self.provider_combo.currentData() == "gemini"
-        self._gemini_box.setVisible(gemini)
-        self._pollinations_box.setVisible(not gemini)
-        self.remove_button.setVisible(gemini)
+    KEY_HELP = {
+        "gemini": "Paste a Google AI Studio API key (aistudio.google.com/apikey). Image generation needs "
+                  "billing enabled on the key's project.",
+        "manus": "Paste a Manus API key (Manus web app → Settings → API Integration → Create API Key). "
+                 "Each image runs one Manus agent task, which uses credits and usually takes 1–5 minutes.",
+    }
+    MODEL_TITLES = {"gemini": "Image model", "manus": "Agent profile"}
 
-    def set_provider_state(self, provider: str, masked_key: str, model: str, note: str = "") -> None:
-        """Show the active provider, whether a Gemini key is saved (masked) and the model."""
+    def _model_options(self, provider: str) -> dict[str, str]:
+        if provider == "manus":
+            return AGENT_PROFILES
+        return {model_id: f"{name}  ·  {model_id}" for model_id, name in IMAGE_MODELS.items()}
+
+    def _on_provider_changed(self, _index: int = 0) -> None:
+        provider = self.provider_combo.currentData()
+        keyed = provider in ("gemini", "manus")
+        self._key_box.setVisible(keyed)
+        self._pollinations_box.setVisible(provider == "pollinations")
+        self.remove_button.setVisible(keyed)
+        if not keyed:
+            return
+        state = getattr(self, "_provider_state", {})
+        masked = state.get("keys", {}).get(provider, "")
+        self._key_help.setText(self.KEY_HELP[provider] + " Keys are stored only in the local .env file, "
+                               "which is excluded from git.")
+        self.key_edit.clear()
+        name = "Manus" if provider == "manus" else "Google AI Studio"
+        self.key_edit.setPlaceholderText(
+            f"Saved key {masked} — paste a new key to replace it" if masked else f"Paste your {name} API key")
+        self.remove_button.setEnabled(bool(masked))
+        self._model_title.setText(self.MODEL_TITLES[provider].upper())
+        self.model_combo.blockSignals(True)
+        self.model_combo.clear()
+        for value, text in self._model_options(provider).items():
+            self.model_combo.addItem(text, value)
+        selected = state.get("models", {}).get(provider)
+        self.model_combo.setCurrentIndex(max(0, self.model_combo.findData(selected)))
+        self.model_combo.blockSignals(False)
+
+    def set_provider_state(self, provider: str, masked_keys: dict[str, str], models: dict[str, str],
+                           note: str = "") -> None:
+        """Show the active provider plus saved (masked) keys and model choices per provider."""
+        self._provider_state = {"keys": masked_keys, "models": models}
         index = self.provider_combo.findData(provider if provider in PROVIDERS else "pollinations")
         self.provider_combo.setCurrentIndex(max(0, index))
         self._on_provider_changed()
-        self.key_edit.clear()
-        self.key_edit.setPlaceholderText(
-            f"Saved key {masked_key} — paste a new key to replace it" if masked_key
-            else "Paste your Google AI Studio API key")
-        if provider == "pollinations":
-            badge, style = "Active: Pollinations", "BadgeAccent"
-        elif provider == "gemini" and masked_key:
-            badge, style = "Active: Gemini", "BadgeAccent"
+        if provider == "pollinations" or (provider in masked_keys and masked_keys.get(provider)):
+            badge, style = f"Active: {PROVIDERS[provider].split(' (')[0]}", "BadgeAccent"
         else:
             badge, style = "Not configured", "Badge"
         self._provider_badge.setObjectName(style)
         self._provider_badge.setText(badge)
         self._provider_badge.style().unpolish(self._provider_badge)
         self._provider_badge.style().polish(self._provider_badge)
-        self.remove_button.setEnabled(bool(masked_key))
-        self.model_combo.setCurrentIndex(max(0, self.model_combo.findData(model)))
         self.set_provider_note(note)
 
     def set_provider_note(self, note: str) -> None:

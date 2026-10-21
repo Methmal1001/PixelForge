@@ -9,7 +9,7 @@ from __future__ import annotations
 import math
 from pathlib import Path
 
-from PIL import Image, ImageEnhance, ImageOps, ImageStat, UnidentifiedImageError, features
+from PIL import Image, ImageChops, ImageEnhance, ImageFilter, ImageOps, ImageStat, UnidentifiedImageError, features
 
 from models.design import Adjustments
 
@@ -206,6 +206,20 @@ def flip_vertical(image: Image.Image) -> Image.Image:
     return image.transpose(Image.Transpose.FLIP_TOP_BOTTOM)
 
 
+def rotate_free(image: Image.Image, degrees: float) -> Image.Image:
+    """Rotate clockwise by any angle. The canvas grows to fit; new corners are transparent."""
+    try:
+        angle = float(degrees)
+    except (TypeError, ValueError) as exc:
+        raise ImageProcessingError("The rotation angle must be a number.") from exc
+    if not math.isfinite(angle) or abs(angle) > 360:
+        raise ImageProcessingError("The rotation angle must be between -360 and 360 degrees.")
+    if angle % 360 == 0:
+        return image.copy()
+    return image.convert("RGBA").rotate(-angle, resample=Image.Resampling.BICUBIC, expand=True,
+                                        fillcolor=(0, 0, 0, 0))
+
+
 # --------------------------------------------------------------------------- colour
 
 
@@ -250,21 +264,129 @@ def to_grayscale(image: Image.Image) -> Image.Image:
     return _apply_to_color(image, lambda im: ImageOps.grayscale(im).convert("RGB"))
 
 
+def _clamp_amount(value: object, low: int, high: int, name: str) -> float:
+    try:
+        number = float(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError) as exc:
+        raise ImageProcessingError(f"{name} must be a number.") from exc
+    if not math.isfinite(number):
+        raise ImageProcessingError(f"{name} must be a number.")
+    return max(low, min(high, number))
+
+
+def _lut(function) -> list[int]:
+    return [max(0, min(255, round(function(v / 255.0) * 255))) for v in range(256)]
+
+
+def adjust_sharpness(image: Image.Image, factor: float) -> Image.Image:
+    value = _validate_factor(factor, "Sharpness")
+    return _apply_to_color(image, lambda im: ImageEnhance.Sharpness(im).enhance(value))
+
+
+def adjust_tone(image: Image.Image, highlights: float = 0, shadows: float = 0) -> Image.Image:
+    """Lift or darken shadows and highlights independently (-100 … 100), keeping pure black/white."""
+    h = _clamp_amount(highlights, -100, 100, "Highlights") / 100
+    sh = _clamp_amount(shadows, -100, 100, "Shadows") / 100
+    if not h and not sh:
+        return image.copy()
+    table = _lut(lambda x: x + 0.5 * sh * 4 * x * (1 - x) ** 2 + 0.5 * h * 4 * (1 - x) * x ** 2)
+    return _apply_to_color(image, lambda im: im.point(table * 3))
+
+
+def adjust_white_balance(image: Image.Image, warmth: float = 0, tint: float = 0) -> Image.Image:
+    """Warmth shifts blue↔orange, tint shifts green↔magenta (-100 … 100)."""
+    w = _clamp_amount(warmth, -100, 100, "Warmth") / 100
+    t = _clamp_amount(tint, -100, 100, "Tint") / 100
+    if not w and not t:
+        return image.copy()
+    red = _lut(lambda x: x * (1 + 0.18 * w) + 0.04 * w)
+    green = _lut(lambda x: x * (1 - 0.15 * t))
+    blue = _lut(lambda x: x * (1 - 0.18 * w))
+    return _apply_to_color(image, lambda im: im.point(red + green + blue))
+
+
+def shift_hue(image: Image.Image, degrees: float) -> Image.Image:
+    """Rotate every hue around the colour wheel (-180 … 180 degrees)."""
+    shift = round(_clamp_amount(degrees, -180, 180, "Hue") / 360 * 256) % 256
+    if not shift:
+        return image.copy()
+
+    def rotate(im: Image.Image) -> Image.Image:
+        h, s_, v = im.convert("HSV").split()
+        return Image.merge("HSV", (h.point(lambda p: (p + shift) % 256), s_, v)).convert("RGB")
+
+    return _apply_to_color(image, rotate)
+
+
+def apply_blur(image: Image.Image, amount: float) -> Image.Image:
+    """Gaussian blur; ``amount`` 0 … 100 is relative to the image size."""
+    value = _clamp_amount(amount, 0, 100, "Blur")
+    if not value:
+        return image.copy()
+    radius = value / 100 * max(image.size) * 0.02
+    return image.filter(ImageFilter.GaussianBlur(radius))
+
+
+def apply_vignette(image: Image.Image, amount: float) -> Image.Image:
+    """Darken the edges (0 … 100) with a smooth elliptical falloff."""
+    value = _clamp_amount(amount, 0, 100, "Vignette") / 100
+    if not value:
+        return image.copy()
+    strength = 0.85 * value
+
+    def falloff(x: float) -> float:
+        t = min(1.0, max(0.0, (x - 0.45) / 0.55))
+        return 1 - strength * t * t * (3 - 2 * t)
+
+    mask = Image.radial_gradient("L").point(_lut(falloff)).resize(image.size, Image.Resampling.BILINEAR)
+
+    def darken(im: Image.Image) -> Image.Image:
+        return ImageChops.multiply(im, Image.merge("RGB", (mask, mask, mask)))
+
+    return _apply_to_color(image, darken)
+
+
+def to_sepia(image: Image.Image) -> Image.Image:
+    return _apply_to_color(image, lambda im: ImageOps.colorize(
+        ImageOps.grayscale(im), black="#2B1D0E", white="#F6E8CB", mid="#A3805A"))
+
+
+def invert_colors(image: Image.Image) -> Image.Image:
+    return _apply_to_color(image, ImageOps.invert)
+
+
 def apply_adjustments(image: Image.Image, adjustments: Adjustments) -> Image.Image:
-    """Apply all colour adjustments to ``image``.
+    """Apply every adjustment to ``image`` in a fixed, photo-editor-like order.
 
     Returns ``image`` itself when there is nothing to do, so callers must not
     mutate the result.
     """
+    a = adjustments
     result = image
-    if adjustments.brightness != 1.0:
-        result = adjust_brightness(result, adjustments.brightness)
-    if adjustments.contrast != 1.0:
-        result = adjust_contrast(result, adjustments.contrast)
-    if adjustments.saturation != 1.0:
-        result = adjust_saturation(result, adjustments.saturation)
-    if adjustments.grayscale:
+    if a.highlights or a.shadows:
+        result = adjust_tone(result, a.highlights, a.shadows)
+    if a.brightness != 1.0:
+        result = adjust_brightness(result, a.brightness)
+    if a.contrast != 1.0:
+        result = adjust_contrast(result, a.contrast)
+    if a.saturation != 1.0:
+        result = adjust_saturation(result, a.saturation)
+    if a.warmth or a.tint:
+        result = adjust_white_balance(result, a.warmth, a.tint)
+    if a.hue:
+        result = shift_hue(result, a.hue)
+    if a.grayscale:
         result = to_grayscale(result)
+    if a.sepia:
+        result = to_sepia(result)
+    if a.invert:
+        result = invert_colors(result)
+    if a.sharpness != 1.0:
+        result = adjust_sharpness(result, a.sharpness)
+    if a.blur:
+        result = apply_blur(result, a.blur)
+    if a.vignette:
+        result = apply_vignette(result, a.vignette)
     return result
 
 

@@ -15,6 +15,11 @@ from PySide6.QtCore import (
 )
 from PySide6.QtGui import QColor, QIcon, QPainter, QPixmap
 from PySide6.QtWidgets import (
+    QAbstractScrollArea,
+    QAbstractSlider,
+    QAbstractSpinBox,
+    QApplication,
+    QComboBox,
     QButtonGroup,
     QColorDialog,
     QFrame,
@@ -23,6 +28,8 @@ from PySide6.QtWidgets import (
     QLabel,
     QMessageBox,
     QPushButton,
+    QScrollBar,
+    QSizePolicy,
     QSlider,
     QToolButton,
     QVBoxLayout,
@@ -69,6 +76,41 @@ def label(text: str, object_name: str | None = None, wrap: bool = False) -> QLab
         widget.setObjectName(object_name)
     widget.setWordWrap(wrap)
     return widget
+
+
+class ElidedLabel(QLabel):
+    """Single-line label that shortens long text with "…" instead of widening the layout."""
+
+    def __init__(self, text: str = "", object_name: str | None = None,
+                 mode: Qt.TextElideMode = Qt.TextElideMode.ElideMiddle) -> None:
+        super().__init__()
+        if object_name:
+            self.setObjectName(object_name)
+        self._mode = mode
+        self._full = ""
+        self.setText(text)
+
+    def setText(self, text: str) -> None:  # noqa: N802
+        self._full = text or ""
+        self._refresh()
+
+    def text(self) -> str:
+        return self._full
+
+    def _refresh(self) -> None:
+        shown = self.fontMetrics().elidedText(self._full, self._mode, max(0, self.width()))
+        super().setText(shown)
+        self.setToolTip(self._full if shown != self._full else "")
+
+    def resizeEvent(self, event) -> None:  # noqa: N802
+        super().resizeEvent(event)
+        self._refresh()
+
+    def minimumSizeHint(self) -> QSize:  # noqa: N802
+        return QSize(24, super().minimumSizeHint().height())
+
+    def sizeHint(self) -> QSize:  # noqa: N802
+        return QSize(self.fontMetrics().horizontalAdvance(self._full) + 4, super().sizeHint().height())
 
 
 def divider() -> QFrame:
@@ -267,41 +309,57 @@ class SegmentedControl(QFrame):
 
 
 class LabeledSlider(QWidget):
-    """A -100…100 slider with an icon, name and live value readout."""
+    """A slider with an optional icon, a name and a live value readout.
+
+    Double-clicking the value resets it to ``default``.
+    """
 
     valueChanged = Signal(int)
     sliderReleased = Signal()
 
-    def __init__(self, name: str, icon_name: str, parent: QWidget | None = None) -> None:
+    def __init__(self, name: str, icon_name: str | None = None, parent: QWidget | None = None, *,
+                 minimum: int = -100, maximum: int = 100, default: int = 0, suffix: str = "",
+                 signed: bool = True) -> None:
         super().__init__(parent)
+        self._default = default
+        self._suffix = suffix
+        self._signed = signed
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(6)
+        layout.setSpacing(5)
 
         header = QHBoxLayout()
         header.setSpacing(8)
-        icon_label = QLabel()
-        set_pixmap(icon_label, icon_name, "text_dim", 16)
-        header.addWidget(icon_label)
+        if icon_name:
+            icon_label = QLabel()
+            set_pixmap(icon_label, icon_name, "text_dim", 16)
+            header.addWidget(icon_label)
         header.addWidget(QLabel(name))
         header.addStretch(1)
-        self._value_label = QLabel("0")
+        self._value_label = QLabel()
         self._value_label.setObjectName("StatusText")
+        self._value_label.setToolTip("Double-click to reset")
         header.addWidget(self._value_label)
         layout.addLayout(header)
 
         self.slider = QSlider(Qt.Orientation.Horizontal)
-        self.slider.setRange(-100, 100)
-        self.slider.setPageStep(10)
+        self.slider.setRange(minimum, maximum)
+        self.slider.setValue(default)
+        self.slider.setPageStep(max(1, (maximum - minimum) // 20))
         self.slider.setCursor(Qt.CursorShape.PointingHandCursor)
         self.slider.setToolTip(f"Drag to adjust {name.lower()}. Double-click the value to reset.")
         self.slider.valueChanged.connect(self._on_value)
         self.slider.sliderReleased.connect(self.sliderReleased)
         layout.addWidget(self.slider)
-        self._value_label.mouseDoubleClickEvent = lambda _e: self.slider.setValue(0)
+        self._value_label.mouseDoubleClickEvent = lambda _e: self.slider.setValue(self._default)
+        self._show(default)
+
+    def _show(self, value: int) -> None:
+        text = f"{value:+d}" if (self._signed and value) else str(value)
+        self._value_label.setText(text + self._suffix)
 
     def _on_value(self, value: int) -> None:
-        self._value_label.setText(f"{value:+d}" if value else "0")
+        self._show(value)
         self.valueChanged.emit(value)
 
     def value(self) -> int:
@@ -309,12 +367,49 @@ class LabeledSlider(QWidget):
 
     def setValue(self, value: int, emit: bool = True) -> None:
         self.slider.blockSignals(not emit)
-        self.slider.setValue(value)
+        self.slider.setValue(int(round(value)))
         self.slider.blockSignals(False)
-        self._value_label.setText(f"{value:+d}" if value else "0")
+        self._show(self.slider.value())
 
     def isSliderDown(self) -> bool:
         return self.slider.isSliderDown()
+
+
+class CollapsibleSection(QWidget):
+    """A titled section whose body can be collapsed by clicking the header."""
+
+    def __init__(self, title: str, expanded: bool = True, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(8)
+        self._header = QToolButton()
+        self._header.setObjectName("SectionHeader")
+        self._header.setText(title.upper().replace("&", "&&"))
+        self._header.setFont(section_font())
+        self._header.setCheckable(True)
+        self._header.setChecked(expanded)
+        self._header.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._header.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        self._header.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self._header.toggled.connect(self._on_toggled)
+        outer.addWidget(self._header)
+        self.body = QWidget()
+        self.content = QVBoxLayout(self.body)
+        self.content.setContentsMargins(0, 0, 0, 4)
+        self.content.setSpacing(10)
+        outer.addWidget(self.body)
+        self._on_toggled(expanded)
+
+    def _on_toggled(self, expanded: bool) -> None:
+        set_icon(self._header, "chevron_down" if expanded else "chevron_right", "text_muted", checked="text_muted")
+        self.body.setVisible(expanded)
+
+    def addWidget(self, widget: QWidget, *args) -> None:  # noqa: N802
+        self.content.addWidget(widget, *args)
+
+    def addLayout(self, layout) -> None:  # noqa: N802
+        self.content.addLayout(layout)
 
 
 def swatch_icon(color: str, size: int = 18) -> QIcon:
@@ -335,10 +430,14 @@ class ColorButton(QPushButton):
 
     colorChanged = Signal(str)
 
-    def __init__(self, color: str = "#FFFFFF", title: str = "Choose colour", parent: QWidget | None = None) -> None:
+    def __init__(self, color: str = "#FFFFFF", title: str = "Choose colour", parent: QWidget | None = None,
+                 compact: bool = False) -> None:
         super().__init__(parent)
         self._title = title
         self._color = color
+        self._compact = compact
+        if compact:
+            self.setFixedSize(40, 34)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setIconSize(QSize(18, 18))
         self.clicked.connect(self._choose)
@@ -355,9 +454,30 @@ class ColorButton(QPushButton):
 
     def _refresh(self) -> None:
         self.setIcon(swatch_icon(self._color))
-        self.setText(f"  {self._color.upper()}")
+        self.setText("" if self._compact else f"  {self._color.upper()}")
+        self.setToolTip(f"{self._title}: {self._color.upper()}")
 
     def _choose(self) -> None:
         chosen = QColorDialog.getColor(QColor(self._color), self.window(), self._title)
         if chosen.isValid():
             self.setColor(chosen.name(), emit=True)
+
+
+class WheelGuard(QObject):
+    """Stops the mouse wheel from changing dropdowns, number boxes and sliders.
+
+    The wheel event is passed to the parent instead, so the surrounding panel
+    scrolls. Values change only when the control is clicked or typed into.
+    """
+
+    def eventFilter(self, watched: QObject, event: QEvent) -> bool:  # noqa: N802
+        if (event.type() == QEvent.Type.Wheel
+                and isinstance(watched, (QComboBox, QAbstractSpinBox, QAbstractSlider))
+                and not isinstance(watched, QScrollBar)):
+            parent = watched.parentWidget()
+            while parent is not None and not isinstance(parent, QAbstractScrollArea):
+                parent = parent.parentWidget()
+            if parent is not None:  # scroll the surrounding panel instead
+                QApplication.sendEvent(parent.verticalScrollBar(), event)
+            return True
+        return False

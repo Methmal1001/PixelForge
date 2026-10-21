@@ -40,6 +40,10 @@ def main() -> int:
     from ui.styles import apply_theme
 
     apply_theme(app, load_theme_mode())
+    from ui.widgets import WheelGuard
+
+    wheel_guard = WheelGuard(app)  # dropdowns/sliders change only on click, never on scroll
+    app.installEventFilter(wheel_guard)
     app.setWindowIcon(QIcon(logo_pixmap()))
 
     # Let Ctrl+C in the terminal close the app: Qt's event loop otherwise never
