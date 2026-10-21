@@ -38,7 +38,7 @@ from services.image_processor import normalize_mode
 API_BASE = "https://image.pollinations.ai"
 DEFAULT_MODEL = "sana"
 MAX_PROMPT_CHARS = 1500
-USER_AGENT = "PixelForgeAIStudio/0.2"
+USER_AGENT = "PiXdEm-AI-Studio/0.2"
 
 # (url, timeout) -> (status_code, content_type, body)
 Transport = Callable[[str, float], tuple[int, str, bytes]]

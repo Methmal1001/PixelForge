@@ -1,7 +1,13 @@
-"""Local configuration from the git-ignored .env file and environment variables.
+"""Per-user configuration: AI provider choice and the user's own API keys.
 
-Secrets such as API keys live only in .env (never in source code). Environment
-variables take precedence over .env values.
+Every Windows user has a private settings file (never shipped with the program
+and never committed to git):
+
+    %APPDATA%\\DEMANS\\PiXdEm AI STUDIO\\settings.env
+
+No API key is built into the application; each user adds their own in
+Settings → AI provider. Environment variables with the same names take
+precedence (useful for development).
 """
 
 from __future__ import annotations
@@ -9,8 +15,23 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+from app_info import APP_NAME, COMPANY
+
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
-ENV_PATH = PROJECT_ROOT / ".env"
+
+
+def user_data_dir() -> Path:
+    """Folder for this Windows user's settings (created on first use)."""
+    base = os.environ.get("APPDATA") or str(Path.home() / "AppData" / "Roaming")
+    return Path(base) / COMPANY / APP_NAME
+
+
+def user_pictures_dir() -> Path:
+    """Where generated images are saved: Pictures\\PiXdEm AI STUDIO\\Generated."""
+    return Path.home() / "Pictures" / APP_NAME / "Generated"
+
+
+ENV_PATH = user_data_dir() / "settings.env"
 
 
 def _parse_line(line: str) -> tuple[str, str] | None:
@@ -42,7 +63,7 @@ def get_setting(name: str, default: str | None = None, path: Path = ENV_PATH) ->
 
 
 def update_env(values: dict[str, str | None], path: Path = ENV_PATH) -> None:
-    """Set (or remove, when the value is None) keys in .env, keeping other lines intact."""
+    """Set (or remove, when the value is None) keys in the settings file, keeping other lines intact."""
     lines = path.read_text(encoding="utf-8").splitlines() if path.exists() else []
     remaining = dict(values)
     output = []
@@ -57,6 +78,7 @@ def update_env(values: dict[str, str | None], path: Path = ENV_PATH) -> None:
     for key, value in remaining.items():
         if value is not None:
             output.append(f"{key}={value}")
+    path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("\n".join(output).strip() + "\n", encoding="utf-8")
 
 

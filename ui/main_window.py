@@ -106,11 +106,11 @@ PLACEHOLDERS = {
     ),
     "history": dict(
         icon_name="history", title="Generation History", stage="Browser planned for Stage 3",
-        description="Every AI generation is already saved to storage/generated as a PNG with a JSON file "
+        description="Every AI generation is already saved to Pictures\\PiXdEm AI STUDIO\\Generated as a PNG with a JSON file "
                     "holding its prompt and settings. A visual history browser arrives in Stage 3.",
         bullets=["Re-run or tweak previous prompts",
                  "Open any result in the editor",
-                 "Until then, open files from storage/generated with Open Image"],
+                 "Until then, open files from that folder with Open Image"],
     ),
 }
 
@@ -141,7 +141,7 @@ def _run_in_background(signals: _BackgroundSignals, task: str, work) -> None:
         else:
             signals.succeeded.emit(task, result)
 
-    threading.Thread(target=runner, name=f"pixelforge-{task}", daemon=True).start()
+    threading.Thread(target=runner, name=f"pixdem-{task}", daemon=True).start()
 
 
 class _RenderJob(QRunnable):
@@ -1403,7 +1403,7 @@ class MainWindow(QMainWindow):
             self.toasts.show("warning", "Result not saved to disk", str(exc))
         self.generation_panel.set_status(
             "Design generated", f"{image.width} × {image.height} px · {model}"
-            + (" · a copy is saved in the storage/generated folder" if saved else ""), "success")
+            + (" · a copy is saved in Pictures\\PiXdEm AI STUDIO\\Generated" if saved else ""), "success")
         if not self._confirm_discard():
             self.toasts.show("info", "Generated design kept on disk",
                              f"Your current design was left open. The result is in {saved}", 8000)
@@ -1459,7 +1459,7 @@ class MainWindow(QMainWindow):
         try:
             update_env(values)
         except OSError as exc:
-            self.toasts.show("error", "Settings not saved", f"Could not write .env: {exc}")
+            self.toasts.show("error", "Settings not saved", f"Could not save your settings: {exc}")
             return
         self._refresh_provider_ui("Saved. Use Test Connection to check the provider is reachable.")
         self.toasts.show("success", "AI provider saved", PROVIDERS.get(provider, provider))
@@ -1487,7 +1487,7 @@ class MainWindow(QMainWindow):
         if provider not in PROVIDER_SETTINGS:
             return
         name = PROVIDERS[provider].split(" (")[0]
-        if not confirm(self, "Remove API key?", f"The saved {name} API key will be deleted from .env.",
+        if not confirm(self, "Remove API key?", f"The saved {name} API key will be deleted from this computer.",
                        "Remove Key", "This provider will be unavailable until you add a key again."):
             return
         update_env({PROVIDER_SETTINGS[provider][0]: None})
@@ -1605,7 +1605,7 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event: QCloseEvent) -> None:  # noqa: N802
         if self.document is not None and self.document.modified:
-            if not confirm(self, "Quit PixelForge AI Studio?", "Your design has unexported changes.",
+            if not confirm(self, f"Quit {APP_NAME}?", "Your design has unexported changes.",
                            "Quit Without Exporting", "Use Export (Ctrl+E) to save it as PNG or JPEG."):
                 event.ignore()
                 return

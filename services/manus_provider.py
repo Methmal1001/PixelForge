@@ -178,7 +178,7 @@ class ManusImageService(ImageGenerationService):
             "agent_profile": self.model,
             "interactive_mode": False,
             "share_visibility": "private",
-            "title": f"PixelForge: {request.prompt.strip()[:60]}",
+            "title": f"PiXdEm: {request.prompt.strip()[:60]}",
         }
 
     # ------------------------------------------------------------------ generation
@@ -323,7 +323,7 @@ class ManusImageService(ImageGenerationService):
     def _download(self, attachment: dict) -> Image.Image:
         url = attachment["url"]
         # The attachment URL is a download link; the API key is deliberately NOT sent to it.
-        status, _ctype, body = self._transport("GET", url, {"User-Agent": "PixelForgeAIStudio/0.2"}, None, 120)
+        status, _ctype, body = self._transport("GET", url, {"User-Agent": "PiXdEm-AI-Studio/0.2"}, None, 120)
         if status != 200:
             raise GenerationError(f"Downloading the image from Manus failed ({status}).")
         try:

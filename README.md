@@ -1,14 +1,16 @@
-# PixelForge AI Studio
+# PiXdEm AI STUDIO
+
+**by DEMANS**
 
 A native Python desktop studio for social-media posts, advertisements and promotional graphics.
 
 **Current stage: Stage 2 — AI generation with Google Gemini** (on top of the Stage 1 editor).
-AI generation uses your own Google AI Studio API key, stored only in the git-ignored `.env` file. Without a key the editor still works fully and nothing is sent anywhere. Generated images are never faked.
+No API keys are included with the software. Each user adds their own key in **Settings → AI provider**; it is stored privately for that Windows user in `%APPDATA%\DEMANS\PiXdEm AI STUDIO\settings.env`. Without any key the editor works fully, and the free Pollinations.ai provider (the default) can generate images; it receives only the prompt text. Generated images are never faked.
 
 ## Run
 
 ```powershell
-cd E:\2026\Python\PixelForgeAI
+cd E:\2026\Python\PiXdEmAI
 .\.venv\Scripts\activate
 python main.py
 ```
@@ -16,7 +18,7 @@ python main.py
 Without activating the virtual environment:
 
 ```powershell
-E:\2026\Python\PixelForgeAI\.venv\Scripts\python.exe main.py
+E:\2026\Python\PiXdEmAI\.venv\Scripts\python.exe main.py
 ```
 
 **Desktop shortcut (Windows):** create a Desktop icon and a Start Menu entry that open the app without a console window:
@@ -119,7 +121,7 @@ storage/projects, storage/generated   reserved for Stage 2/3
 
 ## Stage 2: AI generation
 
-Choose the provider in **Settings → AI provider** (stored as `AI_PROVIDER` in `.env`):
+Choose the provider in **Settings → AI provider** (stored as `AI_PROVIDER` in the user's `settings.env`):
 
 | Provider | Key | Notes |
 | --- | --- | --- |
@@ -133,7 +135,7 @@ Choose the provider in **Settings → AI provider** (stored as `AI_PROVIDER` in 
 1. Get a key at <https://aistudio.google.com/apikey>.
 2. Add the key in either of these ways:
    - In the app: **Settings → AI provider**, paste the key, choose a model, then click **Save**.
-   - In a file: copy `.env.example` to `.env` and set `GEMINI_API_KEY=...`.
+   - Or edit `%APPDATA%\DEMANS\PiXdEm AI STUDIO\settings.env` (see `.env.example` for the names).
 3. Click **Test Connection**. This checks the key with Google and uses no image quota.
 
 > **Quota:** Google's free tier currently allows **0 image-generation requests** (`limit: 0`). A key without billing passes Test Connection, but Generate shows *"Image quota unavailable"*. To generate images, enable billing on the key's project in Google AI Studio.
@@ -143,14 +145,14 @@ Choose the provider in **Settings → AI provider** (stored as `AI_PROVIDER` in 
 - The request contains the prompt, design type, art style, aspect ratio (1:1, 4:5, 9:16 or 16:9) and an optional reference image. Reference images are downscaled to 1536 px or less before upload.
 - Generation runs on a background thread, so you can keep editing while it works.
 - The result is cropped to the selected social preset (for example 1080×1350) and opened on the canvas, ready for text and export.
-- Each result is saved to `storage/generated/` as a PNG plus a `.json` file with the prompt and settings.
+- Each result is saved to `Pictures\PiXdEm AI STUDIO\Generated\` as a PNG plus a `.json` file with the prompt and settings.
 - API errors become plain-language messages: invalid key, missing model, free tier without image quota, rate limit with retry time, safety block, network failure.
 - Models you can choose in Settings: `gemini-3.1-flash-image` (default), `gemini-3.1-flash-lite-image`, `gemini-2.5-flash-image`, `gemini-3-pro-image`.
 
-### Configuration (`.env`)
+### Configuration (per-user `settings.env`)
 | Key | Meaning |
 | --- | --- |
 | `GEMINI_API_KEY` | Your Google AI Studio key (required for AI generation). |
 | `GEMINI_IMAGE_MODEL` | Model id (optional, default `gemini-3.1-flash-image`). |
 
-Environment variables with the same names override `.env`.
+Environment variables with the same names override the settings file.

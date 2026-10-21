@@ -8,6 +8,7 @@ from PIL import Image
 from models.design import Adjustments, TextElement
 from services.design_document import DesignDocument
 from services.gemini_provider import GeminiImageService
+from services.pollinations_provider import PollinationsImageService
 from services.generation_service import (
     GenerationNotConfiguredError,
     GenerationRequest,
@@ -121,8 +122,13 @@ class GenerationServiceTests(unittest.TestCase):
 
     def test_provider_selection_follows_api_key(self) -> None:
         with mock.patch("services.config.get_setting", return_value=None):
+            # a fresh install with no settings uses the free provider (no key needed)
+            self.assertIsInstance(get_generation_service(), PollinationsImageService)
+        no_key = {"AI_PROVIDER": "gemini"}
+        with mock.patch("services.config.get_setting", side_effect=lambda name, *a, **k: no_key.get(name)):
             self.assertIsInstance(get_generation_service(), NotConfiguredGenerationService)
-        settings = {"GEMINI_API_KEY": "test-key", "GEMINI_IMAGE_MODEL": "gemini-3.1-flash-lite-image"}
+        settings = {"AI_PROVIDER": "gemini", "GEMINI_API_KEY": "test-key",
+                    "GEMINI_IMAGE_MODEL": "gemini-3.1-flash-lite-image"}
         with mock.patch("services.config.get_setting", side_effect=lambda name, *a, **k: settings.get(name)):
             service = get_generation_service()
         self.assertIsInstance(service, GeminiImageService)

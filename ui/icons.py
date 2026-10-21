@@ -175,7 +175,7 @@ def write_stylesheet_assets(theme: str = "dark") -> dict[str, str]:
 
     File names include the theme because Qt caches stylesheet images by path.
     """
-    folder = Path(tempfile.gettempdir()) / "pixelforge_ai_studio" / "qss"
+    folder = Path(tempfile.gettempdir()) / "pixdem_ai_studio" / "qss"
     folder.mkdir(parents=True, exist_ok=True)
     assets = {
         "chevron": ("chevron_down", resolve("text_dim"), 2.0),

@@ -19,7 +19,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from app_info import APP_NAME, APP_STAGE, APP_VERSION
+from app_info import APP_NAME, APP_SHORT_NAME, APP_STAGE, APP_VERSION, COMPANY
 from models.presets import SIZE_PRESETS
 from services.gemini_provider import IMAGE_MODELS
 from services.manus_provider import AGENT_PROFILES
@@ -270,14 +270,14 @@ class AboutPage(QWidget):
         names = QVBoxLayout()
         names.setSpacing(2)
         names.addWidget(label(APP_NAME, "H1"))
-        names.addWidget(label(f"Version {APP_VERSION} · {APP_STAGE}", "Muted"))
+        names.addWidget(label(f"by {COMPANY} · Version {APP_VERSION} · {APP_STAGE}", "Muted"))
         head.addLayout(names, 1)
         box.addLayout(head)
         box.addSpacing(4)
         box.addWidget(label(
             "A desktop studio for social-media posts, advertisements and promotional graphics. "
-            "Stage 1 delivers the editor: open images, transform and colour-correct them, add "
-            "editable text and export at social-media sizes.",
+            "Generate designs with AI using your own provider key, then edit them like a photo editor: "
+            "filters and adjustments, area selections, movable layers and fully editable text.",
             "Muted", wrap=True,
         ))
 
@@ -287,7 +287,7 @@ class AboutPage(QWidget):
         rows = [
             ("Image editor", "Available", "BadgeAccent"),
             ("Text overlays & export", "Available", "BadgeAccent"),
-            ("AI image generation", "Google Gemini (your API key)", "BadgeAccent"),
+            ("AI image generation", "Pollinations · Manus · Gemini", "BadgeAccent"),
             ("Projects, templates & history", "Stage 3", "Badge"),
         ]
         for row, (name, status, style) in enumerate(rows):
@@ -295,7 +295,7 @@ class AboutPage(QWidget):
             grid.addWidget(label(status, style), row, 1, Qt.AlignmentFlag.AlignLeft)
         grid.setColumnStretch(1, 1)
         box.addLayout(grid)
-        box.addWidget(label("Built with Python 3.12 · PySide6 (Qt 6) · Pillow. No API key required.", "Caption"))
+        box.addWidget(label("Built with Python 3.12 · PySide6 (Qt 6) · Pillow. No API keys are included — each user adds their own.", "Caption"))
         box.addSpacing(6)
         back = make_button("Back to Studio", "primary", "arrow_left")
         back.clicked.connect(self.back_requested)
@@ -406,7 +406,7 @@ class SettingsPage(QWidget):
         set_title.addStretch(1)
         box.addLayout(set_title)
         box.addWidget(label("Choose the colour theme for the whole application. "
-                            "Your choice is saved and used the next time you open PixelForge.",
+                            f"Your choice is saved and used the next time you open {APP_SHORT_NAME}.",
                             "Muted", wrap=True))
         box.addWidget(section_title("Colour theme"))
 
@@ -579,8 +579,8 @@ class SettingsPage(QWidget):
             return
         state = getattr(self, "_provider_state", {})
         masked = state.get("keys", {}).get(provider, "")
-        self._key_help.setText(self.KEY_HELP[provider] + " Keys are stored only in the local .env file, "
-                               "which is excluded from git.")
+        self._key_help.setText(self.KEY_HELP[provider] + " Keys are stored only on this computer, for your Windows user, "
+                               "and are never shared.")
         self.key_edit.clear()
         name = "Manus" if provider == "manus" else "Google AI Studio"
         self.key_edit.setPlaceholderText(

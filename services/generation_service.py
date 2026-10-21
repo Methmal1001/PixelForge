@@ -2,7 +2,7 @@
 
 The GUI talks only to ``ImageGenerationService``. Stage 2 adds the Google Gemini
 provider (services/gemini_provider.py), selected when an API key is configured
-in the git-ignored .env file (or the GEMINI_API_KEY environment variable).
+in the user's own settings (Settings → AI provider).
 """
 
 from __future__ import annotations
@@ -53,7 +53,10 @@ NOT_CONFIGURED_MESSAGE = (
     "AI generation is not configured. Add your Google AI Studio API key in Settings → AI provider."
 )
 
-GENERATED_DIR = Path(__file__).resolve().parent.parent / "storage" / "generated"
+def _generated_dir() -> Path:
+    from services.config import user_pictures_dir
+
+    return user_pictures_dir()
 
 
 class GenerationError(RuntimeError):
@@ -103,13 +106,13 @@ class GenerationRequest:
 
 PRESET_ASPECT_RATIOS = {"square": "1:1", "portrait": "4:5", "story": "9:16", "landscape": "16:9"}
 
-# Provider ids stored as AI_PROVIDER in .env
+# Provider ids stored as AI_PROVIDER in the user settings file
 PROVIDERS = {
     "pollinations": "Pollinations.ai (free, no key)",
     "manus": "Manus AI (your API key, uses credits)",
     "gemini": "Google Gemini (your API key)",
 }
-# provider -> (.env key holding the API key, .env key holding the model/profile)
+# provider -> (settings key holding the API key, settings key holding the model/profile)
 PROVIDER_SETTINGS = {
     "gemini": ("GEMINI_API_KEY", "GEMINI_IMAGE_MODEL"),
     "manus": ("MANUS_API_KEY", "MANUS_AGENT_PROFILE"),
@@ -194,11 +197,11 @@ def selected_provider() -> str:
     provider = (get_setting("AI_PROVIDER") or "").lower()
     if provider in PROVIDERS:
         return provider
-    return "gemini" if get_setting("GEMINI_API_KEY") else "none"
+    return "pollinations"  # works out of the box: free and needs no API key
 
 
 def get_generation_service() -> ImageGenerationService:
-    """Return the active provider according to Settings / .env."""
+    """Return the active provider according to the user's Settings."""
     from services.config import get_setting
 
     provider = selected_provider()
@@ -222,8 +225,9 @@ def get_generation_service() -> ImageGenerationService:
 
 
 def save_generation(image: Image.Image, request: GenerationRequest, model: str,
-                    folder: Path = GENERATED_DIR) -> Path:
+                    folder: Path | None = None) -> Path:
     """Save a generated image plus a JSON sidecar with its prompt and settings."""
+    folder = folder or _generated_dir()
     folder.mkdir(parents=True, exist_ok=True)
     slug = re.sub(r"[^A-Za-z0-9]+", "_", request.prompt.strip())[:40].strip("_").lower() or "design"
     stem = f"{datetime.now():%Y%m%d_%H%M%S}_{slug}"

@@ -1,9 +1,9 @@
-"""Create Windows shortcuts (Desktop + Start Menu) for PixelForge AI Studio.
+"""Create Windows shortcuts (Desktop + Start Menu) for PiXdEm AI STUDIO (DEMANS).
 
 Run from the project folder:
     .venv\\Scripts\\python.exe tools\\create_shortcut.py
 
-It also (re)generates assets/pixelforge.ico from the app logo. The shortcut
+It also (re)generates assets/pixdem.ico from the app logo. The shortcut
 starts the app with pythonw.exe, so no console window appears.
 """
 
@@ -15,8 +15,8 @@ import sys
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
-ICON_PATH = PROJECT_ROOT / "assets" / "pixelforge.ico"
-SHORTCUT_NAME = "PixelForge AI Studio.lnk"
+ICON_PATH = PROJECT_ROOT / "assets" / "pixdem.ico"
+SHORTCUT_NAME = "PiXdEm AI STUDIO.lnk"
 
 
 def build_icon(path: Path = ICON_PATH) -> Path:
@@ -57,7 +57,7 @@ foreach ($folder in $targets) {{
     $link.Arguments = {_ps_quote('"' + str(PROJECT_ROOT / 'main.py') + '"')}
     $link.WorkingDirectory = {_ps_quote(str(PROJECT_ROOT))}
     $link.IconLocation = {_ps_quote(str(icon) + ',0')}
-    $link.Description = 'PixelForge AI Studio - AI design studio'
+    $link.Description = 'PiXdEm AI STUDIO by DEMANS'
     $link.WindowStyle = 1
     $link.Save()
     Write-Output $path

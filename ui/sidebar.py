@@ -1,4 +1,4 @@
-"""Left navigation sidebar with the PixelForge wordmark."""
+"""Left navigation sidebar with the PiXdEm wordmark."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ from PySide6.QtCore import QRectF, QSize, Qt, Signal
 from PySide6.QtGui import QColor, QFont, QLinearGradient, QPainter, QPainterPath, QPixmap
 from PySide6.QtWidgets import QButtonGroup, QFrame, QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget
 
-from app_info import APP_STAGE, APP_VERSION
+from app_info import APP_SHORT_NAME, APP_STAGE, APP_VERSION, COMPANY
 from ui.icons import set_icon
 from ui.styles import COLORS, section_font
 
@@ -19,12 +19,12 @@ NAV_ITEMS = (
 )
 SYSTEM_ITEMS = (
     ("settings", "Settings", "settings", "Colour theme (Dark / Light / System) and preferences"),
-    ("about", "About", "info", "About PixelForge AI Studio"),
+    ("about", "About", "info", "About PiXdEm AI STUDIO by DEMANS"),
 )
 
 
 def paint_logo(painter: QPainter, rect: QRectF) -> None:
-    """Draw the PixelForge mark: a gradient tile with a pixel 'P' and a spark."""
+    """Draw the PiXdEm mark: a gradient tile with a pixel 'P' and a spark."""
     painter.setRenderHint(QPainter.RenderHint.Antialiasing)
     gradient = QLinearGradient(rect.topLeft(), rect.bottomRight())
     gradient.setColorAt(0, QColor(COLORS["accent"]))
@@ -92,7 +92,7 @@ class Sidebar(QFrame):
         brand.addWidget(LogoMark(38))
         words = QVBoxLayout()
         words.setSpacing(0)
-        title = QLabel("PixelForge")
+        title = QLabel(APP_SHORT_NAME)
         title.setObjectName("Wordmark")
         subtitle = QLabel("AI STUDIO")
         subtitle.setObjectName("WordmarkSub")

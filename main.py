@@ -1,4 +1,4 @@
-"""PixelForge AI Studio — application entry point.
+"""PiXdEm AI STUDIO (by DEMANS) — application entry point.
 
 Run with:  python main.py
 """

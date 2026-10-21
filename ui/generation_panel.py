@@ -290,7 +290,7 @@ class GenerationPanel(QWidget):
             self._provider_badge.setObjectName("BadgeAccent")
             self._provider_badge.setText(service.short_name)
             self._caption.setText("Describe your design and set the options. The result opens on the "
-                                  "canvas, ready to edit, and is saved in storage/generated.")
+                                  "canvas, ready to edit, and is saved in Pictures\\PiXdEm AI STUDIO.")
             self.set_status(f"Ready · {service.name}", service.ready_detail(), "success")
         else:
             self._provider_badge.setObjectName("Badge")
